@@ -68,14 +68,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
           
           return SafeArea(
             child: _buildNotionStyleCallUI(call, currentUser),
-          );
-        },
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _forceTerminateCall(widget.call.id),
-        backgroundColor: Colors.red[700],
-        icon: const Icon(Icons.block, color: Colors.white),
-        label: const Text('Force End', style: TextStyle(color: Colors.white)),
+          );        },
       ),
     );
   }
@@ -343,33 +336,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     _fadeController.stop();
     context.read<CallService>().acceptCall(callId);
   }
-
   void _declineCall(String callId) {
     context.read<CallService>().declineCall(callId);
-  }
-
-  void _forceTerminateCall(String callId) {
-    // Show confirmation dialog first
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Force Terminate Call'),
-        content: const Text('This will forcefully terminate the persistent call. Are you sure?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              context.read<CallService>().forceTerminateCall(callId);
-            },
-            child: const Text('Force Terminate'),
-          ),
-        ],
-      ),
-    );
   }
 
   void _endCall(String callId) {
