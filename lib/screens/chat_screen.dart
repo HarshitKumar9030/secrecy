@@ -12,6 +12,7 @@ import '../models/user.dart';
 import 'profile_screen.dart';
 import '../widgets/create_group_dialog.dart';
 import '../widgets/linkify_text.dart';
+import '../widgets/badged_user_name.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -209,11 +210,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _selectedUser!.displayName.isNotEmpty 
-                                  ? _selectedUser!.displayName 
-                                  : _selectedUser!.email.split('@')[0],
+                          children: [                            BadgedUserName(
+                              senderName: _selectedUser!.displayName,
+                              senderEmail: _selectedUser!.email,
                               style: const TextStyle(
                                 fontSize: 20,
                                 fontWeight: FontWeight.w600,
@@ -442,18 +441,25 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              currentUser?.displayName?.isNotEmpty == true
-                                  ? currentUser!.displayName!
-                                  : 'You',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 16,
-                                color: Color(0xFF2F3437),
-                              ),
-                            ),
+                        children: [                          Expanded(
+                            child: currentUser?.displayName?.isNotEmpty == true
+                                ? BadgedUserName(
+                                    senderName: currentUser!.displayName!,
+                                    senderEmail: currentUser.email!,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 16,
+                                      color: Color(0xFF2F3437),
+                                    ),
+                                  )
+                                : const Text(
+                                    'You',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 16,
+                                      color: Color(0xFF2F3437),
+                                    ),
+                                  ),
                           ),
                           if (!isLargeScreen)
                             const Icon(
@@ -946,11 +952,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      user.displayName.isNotEmpty 
-                          ? user.displayName 
-                          : user.email.split('@')[0],
+                  children: [                    BadgedUserName(
+                      senderName: user.displayName,
+                      senderEmail: user.email,
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: isSelected ? FontWeight.w500 : FontWeight.w400,
@@ -1100,11 +1104,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          user.displayName.isNotEmpty 
-                              ? user.displayName 
-                              : user.email.split('@')[0],
+                      children: [                        BadgedUserName(
+                          senderName: user.displayName,
+                          senderEmail: user.email,
                           style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.w600,
@@ -1834,13 +1836,10 @@ class NotionMessageBubble extends StatelessWidget {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      message.senderName.isNotEmpty 
-                          ? message.senderName 
-                          : message.senderEmail.split('@')[0],
+              children: [                Row(
+                  children: [                    BadgedUserName(
+                      senderName: message.senderName,
+                      senderEmail: message.senderEmail,
                       style: const TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 14,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/chat_service.dart';
 import '../models/user.dart';
+import '../utils/owner_utils.dart';
 
 class CreateGroupDialog extends StatefulWidget {
   final List<ChatUser> allUsers;
@@ -405,9 +406,11 @@ class _CreateGroupDialogState extends State<CreateGroupDialog>
                                 ),
                               ),
                       ),
-                    ),
-                    title: Text(
-                      user.displayName.isNotEmpty ? user.displayName : 'No Name',
+                    ),                    title: Text(
+                      OwnerUtils.getDisplayNameWithBadge(
+                        user.displayName.isNotEmpty ? user.displayName : 'No Name',
+                        user.email
+                      ),
                       style: const TextStyle(
                         fontWeight: FontWeight.w500,
                         fontSize: 13,

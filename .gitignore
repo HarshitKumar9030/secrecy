@@ -14,6 +14,7 @@ migrate_working_dir/
 
 /lib/firebase_options.dart
 /android/app/google-services.json
+/lib/utils/owner_utils.dart
 # IntelliJ related
 *.iml
 *.ipr

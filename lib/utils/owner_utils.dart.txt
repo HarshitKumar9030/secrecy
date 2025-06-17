@@ -1,0 +1,65 @@
+# pls make this
+
+class OwnerUtils {
+  static const List<String> ownerEmails = [
+    '@gmail.com',
+  ];
+
+  static const Map<String, String> specialUsers = {
+    '@gmail.com': '💖',
+    '@gmail.com': '🍑', 
+  };
+
+  static const Map<String, String> specialUserTooltips = {
+    '@gmail.com': 'Qt 💕',
+    '@gmail.com': 'Owner 👑',
+    '@gmail.com': 'Ass-istant 🍑',
+  };
+
+  static const String ownerBadge = '👑';
+
+  static bool isOwner(String email) {
+    return ownerEmails.contains(email.toLowerCase());
+  }
+
+  static bool isSpecialUser(String email) {
+    return specialUsers.containsKey(email.toLowerCase());
+  }
+
+  static String getSpecialUserBadge(String email) {
+    return specialUsers[email.toLowerCase()] ?? '';
+  }
+
+  static String getSpecialUserTooltip(String email) {
+    return specialUserTooltips[email.toLowerCase()] ?? '';
+  }
+
+  static String getDisplayNameWithBadge(String senderName, String senderEmail) {
+    final displayName = senderName.isNotEmpty 
+        ? senderName 
+        : senderEmail.split('@')[0];
+    
+    if (isOwner(senderEmail)) {
+      return '$displayName $ownerBadge'; 
+    } else if (isSpecialUser(senderEmail)) {
+      return '$displayName ${getSpecialUserBadge(senderEmail)}'; 
+    }
+    
+    return displayName;
+  }
+
+  /// Returns just the badge emoji if the user has one
+  static String getBadgeOnly(String senderEmail) {
+    if (isOwner(senderEmail)) {
+      return ownerBadge;
+    } else if (isSpecialUser(senderEmail)) {
+      return getSpecialUserBadge(senderEmail);
+    }
+    return '';
+  }
+
+  /// Returns true if the user has any kind of badge (owner or special)
+  static bool hasBadge(String senderEmail) {
+    return isOwner(senderEmail) || isSpecialUser(senderEmail);
+  }
+}
