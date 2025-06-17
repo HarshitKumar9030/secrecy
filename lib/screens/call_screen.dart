@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../models/call_model.dart';
 import '../services/call_service.dart';
 import '../services/auth_service.dart';
+import '../services/webrtc_service.dart';
 
 class CallScreen extends StatefulWidget {
   final Call call;
@@ -21,9 +23,17 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   
   bool _isMuted = false;
   bool _isSpeakerOn = false;
-  @override
+  
+  // Video renderers (like reference repo)
+  final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
+  final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
+  bool _isVideoEnabled = true;
+  bool _isAudioEnabled = true;  @override
   void initState() {
     super.initState();
+    
+    // Initialize video renderers (like reference repo)
+    _initializeRenderers();
     
     // Initialize animations
     _pulseController = AnimationController(
@@ -47,13 +57,32 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       _pulseController.repeat(reverse: true);
       _fadeController.repeat(reverse: true);
     }
-  }
-  @override
+  }  @override
   void dispose() {
+    // Stop animations
     _pulseController.dispose();
     _fadeController.dispose();
+    
+    // Clean up video renderers (like reference repo)
+    _disposeVideoRenderers();
+    
     super.dispose();
-  }  @override
+  }
+
+  Future<void> _disposeVideoRenderers() async {
+    try {
+      // Remove listener if WebRTC service is available
+      if (mounted) {
+        final webRTCService = context.read<WebRTCService>();
+        webRTCService.removeListener(_onStreamUpdate);
+      }
+      
+      await _localRenderer.dispose();
+      await _remoteRenderer.dispose();
+    } catch (e) {
+      debugPrint('Error disposing video renderers: $e');
+    }
+  }@override
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
     final currentUser = authService.user;
@@ -89,21 +118,25 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         children: [
           // Top bar with minimal controls
           _buildTopBar(call),
-          
-          // Main content area
+            // Main content area
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Participant info with beautiful styling
-                _buildMinimalParticipantInfo(call, currentUser?.uid),
-                
-                const SizedBox(height: 60),
-                
-                // Call status
-                _buildCallStatus(call),
-                
-                const SizedBox(height: 40),
+                // Video display for video calls when connected
+                if (call.isVideoCall && call.state == CallState.connected) ...[
+                  _buildVideoDisplay(call),
+                ] else ...[
+                  // Participant info with beautiful styling for audio calls or non-connected states
+                  _buildMinimalParticipantInfo(call, currentUser?.uid),
+                  
+                  const SizedBox(height: 60),
+                  
+                  // Call status
+                  _buildCallStatus(call),
+                  
+                  const SizedBox(height: 40),
+                ],
               ],
             ),
           ),
@@ -357,6 +390,39 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       _isSpeakerOn = !_isSpeakerOn;
     });
     // TODO: Implement actual speaker toggle with WebRTC
+  }
+  // Camera control methods (like reference repo)
+  void _toggleCamera(Call call) {
+    if (!call.isVideoCall) return;
+    
+    setState(() {
+      _isVideoEnabled = !_isVideoEnabled;
+    });
+    
+    // Enable/disable video track
+    final webRTCService = context.read<WebRTCService>();
+    if (webRTCService.localStream != null) {
+      final videoTracks = webRTCService.localStream!.getVideoTracks();
+      for (final track in videoTracks) {
+        track.enabled = _isVideoEnabled;
+      }
+    }
+  }
+
+  void _toggleMicrophone(Call call) {
+    setState(() {
+      _isAudioEnabled = !_isAudioEnabled;
+      _isMuted = !_isAudioEnabled;
+    });
+    
+    // Enable/disable audio track
+    final webRTCService = context.read<WebRTCService>();
+    if (webRTCService.localStream != null) {
+      final audioTracks = webRTCService.localStream!.getAudioTracks();
+      for (final track in audioTracks) {
+        track.enabled = _isAudioEnabled;
+      }
+    }
   }
 
   Color _getStateColor(CallState state) {
@@ -688,32 +754,64 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
             label: 'Accept',
           ),
         ],
-      );
-    } else if (isConnected) {
-      // Connected call controls
-      return Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _buildMinimalSecondaryButton(
-            icon: _isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
-            isActive: _isMuted,
-            onPressed: _toggleMute,
-          ),
-          
-          _buildMinimalActionButton(
-            icon: Icons.call_end_rounded,
-            color: const Color(0xFFFF3B30),
-            onPressed: () => _endCall(call.id),
-            label: 'End',
-          ),
-          
-          _buildMinimalSecondaryButton(
-            icon: _isSpeakerOn ? Icons.volume_up_rounded : Icons.volume_down_rounded,
-            isActive: _isSpeakerOn,
-            onPressed: _toggleSpeaker,
-          ),
-        ],
-      );
+      );    } else if (isConnected) {
+      // Connected call controls - different layout for video vs audio calls
+      if (call.isVideoCall) {
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _buildMinimalSecondaryButton(
+              icon: _isAudioEnabled ? Icons.mic_rounded : Icons.mic_off_rounded,
+              isActive: !_isAudioEnabled,
+              onPressed: () => _toggleMicrophone(call),
+            ),
+            
+            _buildMinimalSecondaryButton(
+              icon: _isVideoEnabled ? Icons.videocam_rounded : Icons.videocam_off_rounded,
+              isActive: !_isVideoEnabled,
+              onPressed: () => _toggleCamera(call),
+            ),
+            
+            _buildMinimalActionButton(
+              icon: Icons.call_end_rounded,
+              color: const Color(0xFFFF3B30),
+              onPressed: () => _endCall(call.id),
+              label: 'End',
+            ),
+            
+            _buildMinimalSecondaryButton(
+              icon: _isSpeakerOn ? Icons.volume_up_rounded : Icons.volume_down_rounded,
+              isActive: _isSpeakerOn,
+              onPressed: _toggleSpeaker,
+            ),
+          ],
+        );
+      } else {
+        // Audio call controls
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _buildMinimalSecondaryButton(
+              icon: _isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
+              isActive: _isMuted,
+              onPressed: _toggleMute,
+            ),
+            
+            _buildMinimalActionButton(
+              icon: Icons.call_end_rounded,
+              color: const Color(0xFFFF3B30),
+              onPressed: () => _endCall(call.id),
+              label: 'End',
+            ),
+            
+            _buildMinimalSecondaryButton(
+              icon: _isSpeakerOn ? Icons.volume_up_rounded : Icons.volume_down_rounded,
+              isActive: _isSpeakerOn,
+              onPressed: _toggleSpeaker,
+            ),
+          ],
+        );
+      }
     } else {
       // Outgoing call
       return _buildMinimalActionButton(
@@ -801,6 +899,124 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
             color: isActive ? Colors.white : Colors.white.withOpacity(0.7),
             size: 24,
           ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _initializeRenderers() async {
+    try {
+      await _localRenderer.initialize();
+      await _remoteRenderer.initialize();
+      // Setup video streams when available
+      _setupVideoStreams();
+    } catch (e) {
+      debugPrint('Error initializing video renderers: $e');
+    }
+  }
+
+  void _setupVideoStreams() {
+    // We'll set this up when WebRTC service is available
+    // This will be called after renderer initialization
+    if (mounted) {
+      final webRTCService = context.read<WebRTCService>();
+      
+      // Setup local stream
+      if (webRTCService.localStream != null) {
+        _localRenderer.srcObject = webRTCService.localStream;
+        setState(() {}); // Critical setState like reference repo
+      }
+      
+      // Setup remote stream  
+      if (webRTCService.remoteStream != null) {
+        _remoteRenderer.srcObject = webRTCService.remoteStream;
+        setState(() {}); // Critical setState like reference repo
+      }
+      
+      // Listen for stream changes
+      webRTCService.addListener(_onStreamUpdate);
+    }
+  }
+
+  void _onStreamUpdate() {
+    if (!mounted) return;
+    
+    final webRTCService = context.read<WebRTCService>();
+    
+    // Update local stream
+    if (_localRenderer.srcObject != webRTCService.localStream) {
+      _localRenderer.srcObject = webRTCService.localStream;
+      setState(() {}); // Critical setState like reference repo
+    }
+    
+    // Update remote stream
+    if (_remoteRenderer.srcObject != webRTCService.remoteStream) {
+      _remoteRenderer.srcObject = webRTCService.remoteStream;
+      setState(() {}); // Critical setState like reference repo
+    }
+  }
+
+  Widget _buildVideoDisplay(Call call) {
+    if (!call.isVideoCall || call.state != CallState.connected) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      height: 300,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.3),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Row(
+          children: [
+            // Local video (small, overlaid)
+            Expanded(
+              flex: 7,
+              child: Stack(
+                children: [
+                  // Remote video (main)
+                  Container(
+                    width: double.infinity,
+                    height: double.infinity,
+                    color: Colors.black,
+                    child: RTCVideoView(
+                      _remoteRenderer,
+                      mirror: false,
+                    ),
+                  ),
+                  // Local video (picture-in-picture)
+                  Positioned(
+                    top: 10,
+                    right: 10,
+                    child: Container(
+                      width: 100,
+                      height: 150,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white, width: 2),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: RTCVideoView(
+                          _localRenderer,
+                          mirror: true,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

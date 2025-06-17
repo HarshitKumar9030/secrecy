@@ -325,16 +325,10 @@ class LinkifyText extends StatelessWidget {
               padding: const EdgeInsets.all(12),
               color: Colors.white,
               child: Row(
-                children: [
-                  Image.asset(
-                    'assets/youtube_icon.png', // You'll need to add this asset
-                    width: 20,
-                    height: 20,
-                    errorBuilder: (context, error, stackTrace) => const Icon(
-                      Icons.video_library,
-                      color: Colors.red,
-                      size: 20,
-                    ),
+                children: [                  const Icon(
+                    Icons.video_library,
+                    color: Colors.red,
+                    size: 20,
                   ),
                   const SizedBox(width: 8),
                   Expanded(

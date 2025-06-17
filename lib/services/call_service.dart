@@ -9,6 +9,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../models/call_model.dart';
 import '../models/call_log.dart';
 import 'webrtc_service.dart';
+import 'video_sdk_permission_service.dart';
 
 class CallService extends ChangeNotifier {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -218,40 +219,63 @@ class CallService extends ChangeNotifier {
       });
     }
   }
-
   // Accept incoming call
   Future<void> acceptCall(String callId) async {
     final user = _auth.currentUser;
     if (user == null) return;
     
+    debugPrint('📞 Accepting call $callId');
+    debugPrint('🔍 Current call state: ${_currentCall?.state}');
+    
     // Enable wakelock to keep screen on during call
     await WakelockPlus.enable();
     
-    // Join the call room
-    joinCallRoom(callId);
+    // Stop ringing first
+    _stopRinging();
     
-    if (_socket != null && _socket!.connected) {
-      _socket!.emit('accept-call', {
-        'roomId': callId,
-        'userId': user.uid,
-      });
-    }
-    
-    // Initialize WebRTC for the call
+    // Update call status to connecting
+    if (_currentCall?.id == callId) {
+      _currentCall = _currentCall!.copyWith(state: CallState.connecting);
+      _callStateController.add(_currentCall);
+      notifyListeners();
+    }    // Initialize WebRTC for the call BEFORE emitting accept
     if (_currentCall != null && _socket != null) {
-      await _webrtcService.initialize(
+      debugPrint('Callee initializing WebRTC as non-host');
+      
+      // Request permissions before initializing WebRTC
+      final permissionType = _currentCall!.type == CallType.video ? 
+        PermissionType.audioVideo : PermissionType.audio;
+      final hasPermissions = await VideoSDKPermissionService.ensurePermissions(permissionType);
+      
+      if (!hasPermissions) {
+        debugPrint('Permissions denied for WebRTC');
+        await declineCall(callId);
+        return;
+      }
+        await _webrtcService.initialize(
         socket: _socket!,
         roomId: callId,
         isHost: false,
         enableVideo: _currentCall!.type == CallType.video,
         enableAudio: true,
       );
+      
+      debugPrint('✅ WebRTC initialized for callee, waiting for ready signal...');
     }
     
-    // Stop ringing
-    _stopRinging();
+    // Join the call room
+    joinCallRoom(callId);
     
-    // Update call status
+    // Now emit accept event to server
+    if (_socket != null && _socket!.connected) {
+      _socket!.emit('accept-call', {
+        'roomId': callId,
+        'userId': user.uid,
+      });
+      debugPrint('Emitted accept-call event');
+    }
+    
+    // Update call status to connected
     if (_currentCall?.id == callId) {
       _currentCall = _currentCall!.copyWith(
         state: CallState.connected,
@@ -259,6 +283,7 @@ class CallService extends ChangeNotifier {
       );
       _callStateController.add(_currentCall);
       notifyListeners();
+      debugPrint('Call state updated to connected for callee');
     }
   }
 
@@ -627,37 +652,54 @@ class CallService extends ChangeNotifier {
       print('❌ Error handling incoming call: $e');
     }
   }
-
   // Handle call accepted
   void _handleCallAccepted(Map<String, dynamic> data) async {
     final callId = data['roomId'] as String;
+    final acceptedBy = data['acceptedBy'] as String;
+    final user = _auth.currentUser;
+    
+    debugPrint('📞 Call accepted for room $callId by $acceptedBy');
+    debugPrint('🔍 Current call ID: ${_currentCall?.id}');
+    debugPrint('👤 Current user ID: ${user?.uid}');
+    debugPrint('📱 Is this caller: ${_currentCall?.callerId == user?.uid}');
     
     if (_currentCall?.id == callId) {
+      // Update call state to connected
       _currentCall = _currentCall!.copyWith(
         state: CallState.connected,
         startedAt: DateTime.now(),
       );
       _callStateController.add(_currentCall);
       
-      // Join the call room
-      joinCallRoom(callId);
-      
-      // Initialize WebRTC for the call (caller side)
-      if (_socket != null) {
-        await _webrtcService.initialize(
+      // Stop any ringing
+      _stopRinging();
+      _cancelCallTimeout();
+        // For the caller (who initiated the call), initialize WebRTC as host
+      if (user != null && _currentCall!.callerId == user.uid && _socket != null) {
+        debugPrint('🔧 Caller initializing WebRTC as host');
+          // Request permissions before initializing WebRTC
+        final permissionType = _currentCall!.type == CallType.video ? 
+          PermissionType.audioVideo : PermissionType.audio;
+        final hasPermissions = await VideoSDKPermissionService.ensurePermissions(permissionType);
+          if (!hasPermissions) {
+          debugPrint('❌ Permissions denied for WebRTC');
+          await endCall(_currentCall!.id, reason: 'Permission denied');
+          return;
+        }        await _webrtcService.initialize(
           socket: _socket!,
           roomId: callId,
           isHost: true,
           enableVideo: _currentCall!.type == CallType.video,
           enableAudio: true,
         );
+        
+        debugPrint('✅ WebRTC initialized successfully for caller - waiting for negotiation signal');
       }
       
-      // Stop any ringing
-      _stopRinging();
-      _cancelCallTimeout();
-      
       notifyListeners();
+      debugPrint('🔄 Call state updated to connected for caller');
+    } else {
+      debugPrint('⚠️ Received call accepted for different call ID');
     }
   }
 
@@ -846,22 +888,36 @@ class CallService extends ChangeNotifier {
       });
     }
   }
-
   // Start listening for incoming calls via socket
   void startListeningForIncomingCalls() {
-    if (_socket == null || !_socket!.connected) {
-      print('❌ Cannot start listening: Socket not connected');
-      return;
-    }
-
     final user = _auth.currentUser;
     if (user == null) {
       print('❌ Cannot start listening: User not authenticated');
       return;
     }
 
-    print('🔔 Starting to listen for incoming calls for user: ${user.uid}');
-      // Listen for incoming calls
+    // Initialize socket if not connected
+    if (_socket == null || !_socket!.connected) {
+      print('🔌 Socket not connected, initializing...');
+      initializeSocket();
+      
+      // Give socket time to connect
+      Timer(Duration(seconds: 2), () {
+        if (_socket != null && _socket!.connected) {
+          print('🔔 Starting to listen for incoming calls for user: ${user.uid}');
+          _setupSocketListeners();
+        } else {
+          print('⚠️ Socket connection failed, calls may not work properly');
+        }
+      });
+    } else {
+      print('🔔 Starting to listen for incoming calls for user: ${user.uid}');
+      _setupSocketListeners();
+    }
+  }
+
+  void _setupSocketListeners() {
+    // Listen for incoming calls
     _socket!.on('incoming-call', (data) => _handleIncomingCall(data as Map<String, dynamic>));
     
     // Listen for call state changes
@@ -887,30 +943,35 @@ class CallService extends ChangeNotifier {
     final user = _auth.currentUser;
     if (user == null) {
       return Stream.value([]);
-    }
-
-    Query query = _firestore.collection('call_logs');
+    }    Query query = _firestore.collection('call_logs');
     
     if (groupId != null) {
       // Group call logs
       query = query.where('groupId', isEqualTo: groupId);
     } else if (recipientId != null) {
-      // 1-on-1 call logs
-      query = query.where('participants', arrayContains: user.uid)
-                  .where('participants', arrayContains: recipientId);
+      // 1-on-1 call logs - use userId field to get user's logs, then filter client-side
+      query = query.where('userId', isEqualTo: user.uid);
     } else {
       // All call logs for user
-      query = query.where('participants', arrayContains: user.uid);
+      query = query.where('userId', isEqualTo: user.uid);
     }
 
     return query
-        .orderBy('createdAt', descending: true)
+        .orderBy('timestamp', descending: true)
         .limit(50)
         .snapshots()
         .map((snapshot) {
-      return snapshot.docs.map((doc) {
+      var callLogs = snapshot.docs.map((doc) {
         final data = doc.data() as Map<String, dynamic>;
         return CallLog.fromMap(data, doc.id);
-      }).toList();    });
+      }).toList();
+      
+      // If we have a specific recipient, filter client-side
+      if (recipientId != null) {
+        callLogs = callLogs.where((log) => log.participantId == recipientId).toList();
+      }
+      
+      return callLogs;
+    });
   }
 }

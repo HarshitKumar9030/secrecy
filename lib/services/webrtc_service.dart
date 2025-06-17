@@ -38,8 +38,7 @@ class WebRTCService extends ChangeNotifier {
   bool get isAudioEnabled => _isAudioEnabled;
   bool get isFrontCameraEnabled => _isFrontCameraEnabled;
   bool get isConnected => _peerConnection?.connectionState == RTCPeerConnectionState.RTCPeerConnectionStateConnected;
-  
-  // Initialize WebRTC connection
+    // Initialize WebRTC connection
   Future<void> initialize({
     required IO.Socket socket,
     required String roomId,
@@ -48,6 +47,7 @@ class WebRTCService extends ChangeNotifier {
     required bool enableAudio,
   }) async {
     try {
+      debugPrint('🚀 Initializing WebRTC - isHost: $isHost, room: $roomId');
       _socket = socket;
       _roomId = roomId;
       _isHost = isHost;
@@ -62,35 +62,58 @@ class WebRTCService extends ChangeNotifier {
       
       // Get user media
       await _getUserMedia();
+        debugPrint('✅ WebRTC initialized successfully - ready for signaling');
       
-      // If host, create offer
-      if (_isHost) {
-        await _createOffer();
-      }
+      // Signal that this client is ready for WebRTC
+      _signalWebRTCReady();
       
-      debugPrint('WebRTC initialized successfully');
     } catch (e) {
-      debugPrint('Error initializing WebRTC: $e');
+      debugPrint('❌ Error initializing WebRTC: $e');
       rethrow;
     }
   }
-    // Setup socket event listeners
+
+  // Signal that WebRTC is ready
+  void _signalWebRTCReady() {
+    _socket?.emit('webrtc-ready', {
+      'roomId': _roomId,
+      'userId': _socket?.id,
+    });
+    debugPrint('📡 Signaled WebRTC ready to server');
+  }
+
+  // Create offer manually (called after both sides are ready)
+  Future<void> createOfferWhenReady() async {
+    if (_isHost && _peerConnection != null) {
+      debugPrint('🎯 Creating offer now that both sides are ready');
+      await _createOffer();
+    }
+  }    // Setup socket event listeners
   void _setupSocketListeners() {
     if (_socket == null) return;
     
     _socket!.on('offer', (data) async {
-      debugPrint('Received WebRTC offer');
+      debugPrint('📨 Received WebRTC offer');
       await _handleOffer(data);
     });
     
     _socket!.on('answer', (data) async {
-      debugPrint('Received WebRTC answer');
+      debugPrint('📨 Received WebRTC answer');
       await _handleAnswer(data);
     });
     
     _socket!.on('ice-candidate', (data) async {
-      debugPrint('Received ICE candidate');
+      debugPrint('📨 Received ICE candidate');
       await _handleIceCandidate(data);
+    });
+    
+    // Listen for WebRTC negotiation start signal
+    _socket!.on('start-webrtc-negotiation', (data) async {
+      debugPrint('🚀 Received start-webrtc-negotiation signal');
+      if (_isHost) {
+        debugPrint('🎯 Host creating offer after negotiation signal...');
+        await _createOffer();
+      }
     });
       // Listen for participant video/audio toggles
     _socket!.on('participant-video-toggle', (data) {
@@ -117,8 +140,7 @@ class WebRTCService extends ChangeNotifier {
         'roomId': _roomId,
         'candidate': candidate.toMap(),
       });
-    };
-      // Handle remote tracks (replaces onAddStream)
+    };    // Handle remote tracks (replaces onAddStream)
     _peerConnection!.onTrack = (RTCTrackEvent event) {
       debugPrint('Received remote track');
       if (event.streams.isNotEmpty) {
@@ -126,6 +148,15 @@ class WebRTCService extends ChangeNotifier {
         if (!_disposed) {
           notifyListeners();
         }
+      }
+    };
+
+    // Also handle onAddStream for better compatibility (like reference repo)
+    _peerConnection!.onAddStream = (MediaStream stream) {
+      debugPrint('Received remote stream (onAddStream)');
+      _remoteStream = stream;
+      if (!_disposed) {
+        notifyListeners();
       }
     };
     
@@ -146,45 +177,124 @@ class WebRTCService extends ChangeNotifier {
         debugPrint('ICE connection failed or disconnected');
       }
     };
-  }
-    // Get user media (camera and microphone)
+  }  // Get user media (camera and microphone)
   Future<void> _getUserMedia() async {
     final Map<String, dynamic> mediaConstraints = {
-      'audio': _isAudioEnabled,
+      'audio': _isAudioEnabled ? {
+        'echoCancellation': true,
+        'noiseSuppression': true,
+        'autoGainControl': true,
+      } : false,
       'video': _isVideoEnabled ? {
         'facingMode': _isFrontCameraEnabled ? 'user' : 'environment',
-        'width': 640,
-        'height': 480,
+        'width': {'ideal': 1280, 'max': 1920},
+        'height': {'ideal': 720, 'max': 1080},
+        'frameRate': {'ideal': 30, 'max': 60},
       } : false,
     };
     
     try {
+      debugPrint('🎥 Requesting user media with constraints: $mediaConstraints');
+      
       _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
       
-      // Add tracks to peer connection (replaces addStream)
+      if (_localStream == null) {
+        throw Exception('Failed to get user media stream');
+      }
+      
+      debugPrint('✅ Local media stream obtained: ${_localStream!.id}');
+      
+      final videoTracks = _localStream!.getVideoTracks();
+      final audioTracks = _localStream!.getAudioTracks();
+      
+      debugPrint('📹 Video tracks: ${videoTracks.length}');
+      debugPrint('🎵 Audio tracks: ${audioTracks.length}');
+        // Verify tracks are active
+      for (var track in videoTracks) {
+        debugPrint('📹 Video track: ${track.id}, enabled: ${track.enabled}');
+      }
+      for (var track in audioTracks) {
+        debugPrint('🎵 Audio track: ${track.id}, enabled: ${track.enabled}');
+      }
+      
+      // Add tracks to peer connection
       if (_peerConnection != null && _localStream != null) {
+        debugPrint('➕ Adding tracks to peer connection...');
         for (final track in _localStream!.getTracks()) {
-          await _peerConnection!.addTrack(track, _localStream!);
-        }      }
+          debugPrint('➕ Adding track: ${track.kind} - ${track.id} (enabled: ${track.enabled})');
+          try {
+            await _peerConnection!.addTrack(track, _localStream!);
+            debugPrint('✅ Track added successfully: ${track.kind}');
+          } catch (e) {
+            debugPrint('❌ Error adding track ${track.kind}: $e');
+          }
+        }
+        
+        // Verify tracks were added
+        final senders = await _peerConnection!.getSenders();
+        debugPrint('📡 Total senders after adding tracks: ${senders.length}');
+      }
       
       if (!_disposed) {
         notifyListeners();
       }
-      debugPrint('Local media stream obtained');
     } catch (e) {
-      debugPrint('Error getting user media: $e');
+      debugPrint('❌ Error getting user media: $e');
+      
+      // Try fallback with simpler constraints
+      if (_isVideoEnabled) {
+        debugPrint('🔄 Trying fallback with simpler video constraints...');
+        try {
+          final fallbackConstraints = {
+            'audio': _isAudioEnabled,
+            'video': _isVideoEnabled ? {'facingMode': 'user'} : false,
+          };
+          
+          _localStream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
+          debugPrint('✅ Fallback media stream obtained');
+          
+          if (_peerConnection != null && _localStream != null) {
+            for (final track in _localStream!.getTracks()) {
+              await _peerConnection!.addTrack(track, _localStream!);
+            }
+          }
+          
+          if (!_disposed) {
+            notifyListeners();
+          }
+          return;
+        } catch (fallbackError) {
+          debugPrint('❌ Fallback also failed: $fallbackError');
+        }
+      }
+      
       rethrow;
     }
   }
-  
-  // Create offer (host)
+    // Create offer (host)
   Future<void> _createOffer() async {
     try {
+      debugPrint('🎯 Creating WebRTC offer...');
+      
+      // Verify we have local stream and tracks
+      if (_localStream == null) {
+        throw Exception('No local stream available for offer');
+      }
+      
+      final tracks = _localStream!.getTracks();
+      debugPrint('📡 Local tracks available for offer: ${tracks.length}');
+      
+      // Verify tracks are added to peer connection
+      final senders = await _peerConnection!.getSenders();
+      debugPrint('📡 Active senders: ${senders.length}');
+      
       RTCSessionDescription offer = await _peerConnection!.createOffer({
         'offerToReceiveAudio': true,
         'offerToReceiveVideo': _isVideoEnabled,
       });
-        await _peerConnection!.setLocalDescription(offer);
+      
+      await _peerConnection!.setLocalDescription(offer);
+      debugPrint('✅ Local description set for offer');
       
       _socket?.emit('offer', {
         'roomId': _roomId,
@@ -193,37 +303,49 @@ class WebRTCService extends ChangeNotifier {
         'participantIds': [], // Will be filled by call service
       });
       
-      debugPrint('Offer created and sent');
+      debugPrint('📡 Offer created and sent to room: $_roomId');
     } catch (e) {
-      debugPrint('Error creating offer: $e');
+      debugPrint('❌ Error creating offer: $e');
+      rethrow;
     }
   }
-  
-  // Handle incoming offer
+    // Handle incoming offer
   Future<void> _handleOffer(dynamic data) async {
     try {
+      debugPrint('📨 Handling incoming offer...');
+      
       final offer = RTCSessionDescription(
         data['offer']['sdp'],
         data['offer']['type'],
       );
       
+      debugPrint('🔄 Setting remote description...');
       await _peerConnection!.setRemoteDescription(offer);
+      debugPrint('✅ Remote description set for offer');
+      
+      // Verify we have local stream for answer
+      if (_localStream == null) {
+        throw Exception('No local stream available for answer');
+      }
       
       // Create answer
+      debugPrint('📝 Creating answer...');
       RTCSessionDescription answer = await _peerConnection!.createAnswer({
         'offerToReceiveAudio': true,
         'offerToReceiveVideo': _isVideoEnabled,
       });
-        await _peerConnection!.setLocalDescription(answer);
       
+      await _peerConnection!.setLocalDescription(answer);
+      debugPrint('✅ Local description set for answer');      
       _socket?.emit('answer', {
         'roomId': _roomId,
         'answer': answer.toMap(),
       });
       
-      debugPrint('Answer created and sent');
+      debugPrint('📡 Answer created and sent to room: $_roomId');
     } catch (e) {
-      debugPrint('Error handling offer: $e');
+      debugPrint('❌ Error handling offer: $e');
+      rethrow;
     }
   }
   
@@ -330,13 +452,13 @@ class WebRTCService extends ChangeNotifier {
         _socket!.off('participant-video-toggle');
         _socket!.off('participant-audio-toggle');
       }
-      
-      // Stop all tracks before disposing streams
+        // Stop all tracks before disposing streams
       if (_localStream != null) {
         final tracks = _localStream!.getTracks();
         for (final track in tracks) {
           try {
             await track.stop();
+            debugPrint('Stopped local track: ${track.kind}');
           } catch (e) {
             debugPrint('Error stopping local track: $e');
           }
@@ -351,12 +473,26 @@ class WebRTCService extends ChangeNotifier {
         for (final track in tracks) {
           try {
             await track.stop();
+            debugPrint('Stopped remote track: ${track.kind}');
           } catch (e) {
             debugPrint('Error stopping remote track: $e');
           }
         }
         await _remoteStream!.dispose();
         _remoteStream = null;
+      }
+      
+      // Remove all senders before closing peer connection (like reference repo)
+      if (_peerConnection != null) {
+        try {
+          final senders = await _peerConnection!.getSenders();
+          for (final sender in senders) {
+            await _peerConnection!.removeTrack(sender);
+            debugPrint('Removed sender');
+          }
+        } catch (e) {
+          debugPrint('Error removing senders: $e');
+        }
       }
       
       // Close peer connection

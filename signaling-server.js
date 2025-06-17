@@ -1,5 +1,3 @@
-
-
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -538,6 +536,35 @@ io.on('connection', (socket) => {
   // Handle ping for connection health
   socket.on('ping', () => {
     socket.emit('pong');
+  });
+
+  // Handle WebRTC ready signal (new event to coordinate timing)
+  socket.on('webrtc-ready', (data) => {
+    const { roomId, userId } = data;
+    console.log(`WebRTC ready signal from ${userId} for room ${roomId}`);
+    
+    if (rooms.has(roomId)) {
+      const room = rooms.get(roomId);
+      if (!room.webrtcReady) {
+        room.webrtcReady = new Set();
+      }
+      room.webrtcReady.add(userId);
+      
+      // Check if both parties are ready
+      const participantCount = room.participants.size;
+      const readyCount = room.webrtcReady.size;
+      
+      console.log(`WebRTC ready count: ${readyCount}/${participantCount} for room ${roomId}`);
+      
+      if (readyCount >= 2 || readyCount === participantCount) {
+        // Both parties are ready, signal to start WebRTC negotiation
+        io.to(roomId).emit('start-webrtc-negotiation', {
+          roomId,
+          message: 'Both parties ready for WebRTC'
+        });
+        console.log(`Starting WebRTC negotiation for room ${roomId}`);
+      }
+    }
   });
 });
 
