@@ -6,6 +6,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:uuid/uuid.dart';
 import '../models/message.dart';
 import '../models/user.dart';
+import '../models/call_log.dart';
 
 class ChatService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -20,6 +21,10 @@ class ChatService {
   final Map<String, DocumentSnapshot?> _lastDocuments = {};
   final Map<String, bool> _hasMoreMessages = {};
   final Map<String, bool> _isLoadingMore = {};
+  
+  // Upload progress tracking
+  final Map<String, StreamController<double>> _uploadProgressControllers = {};
+  final Map<String, UploadTask> _activeUploads = {};
   
   // Settings
   static const int _messagesPerPage = 20;
@@ -452,6 +457,37 @@ class ChatService {
     });
   }
 
+  // Get multiple users by their IDs
+  Future<List<ChatUser>> getUsersByIds(List<String> userIds) async {
+    if (userIds.isEmpty) return [];
+    
+    try {
+      final userDocs = await _firestore
+          .collection('users')
+          .where(FieldPath.documentId, whereIn: userIds)
+          .get();
+      
+      return userDocs.docs.map((doc) {
+        final data = doc.data();
+        return ChatUser(
+          id: doc.id,
+          email: data['email'] ?? '',
+          displayName: data['displayName'] ?? '',
+          photoUrl: data['photoUrl'],
+          bio: data['bio'] ?? '',
+          status: data['status'] ?? '',
+          lastSeen: data['lastSeen'] != null 
+              ? DateTime.parse(data['lastSeen']) 
+              : DateTime.now(),
+          isOnline: data['isOnline'] ?? false,
+        );
+      }).toList();
+    } catch (e) {
+      print('Error getting users by IDs: $e');
+      return [];
+    }
+  }
+
   // Group management
   Future<String> createGroup(String name, String description, List<String> memberIds) async {
     final user = _auth.currentUser;
@@ -747,68 +783,246 @@ class ChatService {
     }
   }
 
-  // Helper methods
-  String _getCacheKey({String? recipientId, String? groupId}) {
-    if (groupId != null) return 'group_$groupId';
-    if (recipientId != null) return 'private_$recipientId';
-    return 'general';
+  // Upload progress tracking
+  Stream<double> getUploadProgressStream(String uploadId) {
+    if (!_uploadProgressControllers.containsKey(uploadId)) {
+      _uploadProgressControllers[uploadId] = StreamController<double>.broadcast();
+    }
+    return _uploadProgressControllers[uploadId]!.stream;
   }
+
+  void _updateUploadProgress(String uploadId, double progress) {
+    if (_uploadProgressControllers.containsKey(uploadId)) {
+      _uploadProgressControllers[uploadId]!.add(progress);
+    }
+  }
+
+  void _completeUpload(String uploadId) {
+    _activeUploads.remove(uploadId);
+    _uploadProgressControllers[uploadId]?.close();
+    _uploadProgressControllers.remove(uploadId);
+  }
+
+  Future<void> cancelUpload(String uploadId) async {
+    final uploadTask = _activeUploads[uploadId];
+    if (uploadTask != null) {
+      await uploadTask.cancel();
+      _completeUpload(uploadId);
+    }
+  }
+
+  // Upload file with progress tracking
+  Future<String> uploadFileWithProgress(
+    File file, 
+    String fileName, {
+    String? recipientId,
+    String? groupId,
+    required Function(String uploadId) onUploadStarted,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) throw Exception('User not authenticated');
+
+    final uploadId = _uuid.v4();
+    final storageRef = _storage.ref().child('chat_files/${user.uid}/$uploadId/$fileName');
+    
+    try {
+      // Start upload task
+      final uploadTask = storageRef.putFile(file);
+      _activeUploads[uploadId] = uploadTask;
+      
+      // Create progress controller
+      _uploadProgressControllers[uploadId] = StreamController<double>.broadcast();
+      
+      // Notify about upload start
+      onUploadStarted(uploadId);
+      
+      // Listen to upload progress
+      uploadTask.snapshotEvents.listen(
+        (snapshot) {
+          final progress = snapshot.bytesTransferred / snapshot.totalBytes;
+          _updateUploadProgress(uploadId, progress);
+        },
+        onError: (error) {
+          _uploadProgressControllers[uploadId]?.addError(error);
+          _completeUpload(uploadId);
+        },
+      );
+      
+      // Wait for upload to complete
+      final snapshot = await uploadTask;
+      final downloadUrl = await snapshot.ref.getDownloadURL();
+      
+      _completeUpload(uploadId);
+      return downloadUrl;
+      
+    } catch (e) {
+      _completeUpload(uploadId);
+      rethrow;
+    }
+  }
+
+  // Call log methods
+  Future<void> addCallLog(CallLog callLog) async {
+    try {
+      await _firestore
+          .collection('call_logs')
+          .doc(callLog.id)
+          .set(callLog.toMap());
+    } catch (e) {
+      print('Error adding call log: $e');
+      rethrow;
+    }
+  }
+
+  Stream<List<CallLog>> getCallLogsStream({String? recipientId, String? groupId}) {
+    final user = _auth.currentUser;
+    if (user == null) return Stream.value([]);
+
+    Query query = _firestore
+        .collection('call_logs')
+        .where('userId', isEqualTo: user.uid)
+        .orderBy('timestamp', descending: true)
+        .limit(50);
+
+    if (recipientId != null) {
+      query = query.where('participantId', isEqualTo: recipientId);
+    } else if (groupId != null) {
+      query = query.where('groupId', isEqualTo: groupId);
+    }
+
+    return query.snapshots().map((snapshot) =>
+        snapshot.docs.map((doc) => CallLog.fromMap(doc.data() as Map<String, dynamic>, doc.id)).toList());
+  }
+
+  Future<List<CallLog>> getRecentCallLogs({int limit = 10}) async {
+    final user = _auth.currentUser;
+    if (user == null) return [];
+
+    try {
+      final querySnapshot = await _firestore
+          .collection('call_logs')
+          .where('userId', isEqualTo: user.uid)
+          .orderBy('timestamp', descending: true)
+          .limit(limit)
+          .get();
+
+      return querySnapshot.docs
+          .map((doc) => CallLog.fromMap(doc.data(), doc.id))
+          .toList();
+    } catch (e) {
+      print('Error getting recent call logs: $e');
+      return [];
+    }
+  }
+
+  // Cleanup
+  void dispose() {
+    _presenceTimer?.cancel();
+    for (final subscription in _activeStreams.values) {
+      subscription?.cancel();
+    }
+    for (final controller in _messageControllers.values) {
+      controller.close();
+    }
+    for (final controller in _uploadProgressControllers.values) {
+      controller.close();
+    }
+    _activeStreams.clear();
+    _messageControllers.clear();
+    _uploadProgressControllers.clear();
+    _activeUploads.clear();
+    _messageCache.clear();
+    _lastDocuments.clear();
+    _hasMoreMessages.clear();
+    _isLoadingMore.clear();
+  }
+  // Cache helper methods
+  String _getCacheKey({String? recipientId, String? groupId}) {
+    if (groupId != null) {
+      return 'group_$groupId';
+    } else if (recipientId != null) {
+      final currentUserId = _auth.currentUser?.uid ?? '';
+      return 'private_${_getChatRoomId(currentUserId, recipientId)}';
+    } else {
+      return 'general';
+    }
+  }
+
   void _addMessageToCache(String cacheKey, Message message, {bool notify = true}) {
     if (!_messageCache.containsKey(cacheKey)) {
       _messageCache[cacheKey] = [];
     }
     
-    _messageCache[cacheKey]!.add(message);
+    // Insert message in chronological order (newest at end)
+    final messages = _messageCache[cacheKey]!;
+    int insertIndex = messages.length;
     
-    if (notify && _messageControllers.containsKey(cacheKey)) {
-      _messageControllers[cacheKey]!.add(List.from(_messageCache[cacheKey]!));
+    for (int i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].timestamp.isBefore(message.timestamp)) {
+        insertIndex = i + 1;
+        break;
+      } else if (messages[i].timestamp.isAtSameMomentAs(message.timestamp)) {
+        // Replace if same timestamp (for optimistic updates)
+        if (messages[i].id == message.id || messages[i].id.startsWith('temp_')) {
+          messages[i] = message;
+          if (notify) _notifyMessageListeners(cacheKey);
+          return;
+        }
+      }
     }
+    
+    messages.insert(insertIndex, message);
+    if (notify) _notifyMessageListeners(cacheKey);
   }
 
   void _updateOptimisticMessage(String cacheKey, String tempId, String realId) {
-    if (!_messageCache.containsKey(cacheKey)) return;
-    
-    final messages = _messageCache[cacheKey]!;
-    final index = messages.indexWhere((m) => m.id == tempId);
-    if (index != -1) {
-      final oldMessage = messages[index];
-      final updatedMessage = Message(
-        id: realId,
-        content: oldMessage.content,
-        type: oldMessage.type,
-        imageUrl: oldMessage.imageUrl,
-        videoUrl: oldMessage.videoUrl,
-        thumbnailUrl: oldMessage.thumbnailUrl,
-        videoDuration: oldMessage.videoDuration,
-        senderId: oldMessage.senderId,
-        senderEmail: oldMessage.senderEmail,
-        senderName: oldMessage.senderName,
-        senderPhotoUrl: oldMessage.senderPhotoUrl,
-        recipientId: oldMessage.recipientId,
-        groupId: oldMessage.groupId,
-        timestamp: oldMessage.timestamp,
-        isOptimistic: false,
-      );
-      
-      messages[index] = updatedMessage;
-      
-      if (_messageControllers.containsKey(cacheKey)) {
-        _messageControllers[cacheKey]!.add(List.from(messages));
+    final messages = _messageCache[cacheKey];
+    if (messages != null) {
+      for (int i = 0; i < messages.length; i++) {        if (messages[i].id == tempId) {
+          messages[i] = Message(
+            id: realId,
+            senderId: messages[i].senderId,
+            senderName: messages[i].senderName,
+            senderEmail: messages[i].senderEmail,
+            content: messages[i].content,
+            timestamp: messages[i].timestamp,
+            type: messages[i].type,
+            imageUrl: messages[i].imageUrl,
+            videoUrl: messages[i].videoUrl,
+            thumbnailUrl: messages[i].thumbnailUrl,
+            videoDuration: messages[i].videoDuration,
+            senderPhotoUrl: messages[i].senderPhotoUrl,
+            recipientId: messages[i].recipientId,
+            groupId: messages[i].groupId,
+            isEdited: messages[i].isEdited,
+            editedAt: messages[i].editedAt,
+            isSystemMessage: messages[i].isSystemMessage,
+            isOptimistic: false, // Update to false since it's now confirmed
+            status: messages[i].status,
+          );
+          _notifyMessageListeners(cacheKey);
+          break;
+        }
       }
     }
   }
 
   void _removeMessageFromCache(String cacheKey, String messageId) {
-    if (!_messageCache.containsKey(cacheKey)) return;
-    
-    _messageCache[cacheKey]!.removeWhere((m) => m.id == messageId);
-    
-    if (_messageControllers.containsKey(cacheKey)) {
-      _messageControllers[cacheKey]!.add(List.from(_messageCache[cacheKey]!));
+    final messages = _messageCache[cacheKey];
+    if (messages != null) {
+      messages.removeWhere((msg) => msg.id == messageId);
+      _notifyMessageListeners(cacheKey);
     }
   }
 
-  // Clear cache for a specific chat (useful when switching chats)
+  void _notifyMessageListeners(String cacheKey) {
+    final controller = _messageControllers[cacheKey];
+    final messages = _messageCache[cacheKey];
+    if (controller != null && messages != null) {
+      controller.add(List.from(messages.reversed));
+    }
+  }
+
   void clearChatCache({String? recipientId, String? groupId}) {
     final cacheKey = _getCacheKey(recipientId: recipientId, groupId: groupId);
     
@@ -831,23 +1045,6 @@ class ChatService {
   void refreshChat({String? recipientId, String? groupId}) {
     clearChatCache(recipientId: recipientId, groupId: groupId);
     // The next call to getMessagesStream will recreate everything
-  }
-
-  // Cleanup
-  void dispose() {
-    _presenceTimer?.cancel();
-    for (final subscription in _activeStreams.values) {
-      subscription?.cancel();
-    }
-    for (final controller in _messageControllers.values) {
-      controller.close();
-    }
-    _activeStreams.clear();
-    _messageControllers.clear();
-    _messageCache.clear();
-    _lastDocuments.clear();
-    _hasMoreMessages.clear();
-    _isLoadingMore.clear();
   }
 
   String _getChatRoomId(String userId1, String userId2) {

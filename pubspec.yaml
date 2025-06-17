@@ -46,13 +46,13 @@ dependencies:
   google_sign_in: ^6.1.5
   video_player: ^2.8.1 
   permission_handler: ^11.0.1
-  url_launcher: ^6.2.2
+  url_launcher: ^6.2.2     
   webview_flutter: ^4.4.2
   # Video/Voice calling dependencies (WebRTC)
-  flutter_webrtc: ^0.9.48
+  flutter_webrtc: ^0.14.1
   socket_io_client: ^2.0.3+1
   flutter_ringtone_player: ^4.0.0+2
-  wakelock: ^0.6.2
+  wakelock_plus: ^1.2.1
 
 dev_dependencies:
   flutter_test:

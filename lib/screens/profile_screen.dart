@@ -6,7 +6,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../services/auth_service.dart';
 import '../services/chat_service.dart';
 import '../models/user.dart';
-import '../widgets/badged_user_name.dart';
 
 class NewProfileScreen extends StatefulWidget {
   final ChatUser? user; // If null, shows current user's profile for editing
@@ -364,9 +363,9 @@ class _NewProfileScreenState extends State<NewProfileScreen>
               
               // Name and Email
               Column(
-                children: [                  BadgedUserName(
-                    senderName: user.displayName.isNotEmpty ? user.displayName : 'No Name',
-                    senderEmail: user.email,
+                children: [
+                  Text(
+                    user.displayName.isNotEmpty ? user.displayName : 'No Name',
                     style: const TextStyle(
                       fontSize: 32,
                       fontWeight: FontWeight.bold,

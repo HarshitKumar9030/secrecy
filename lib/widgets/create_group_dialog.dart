@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../services/chat_service.dart';
 import '../models/user.dart';
-import '../utils/owner_utils.dart';
+
 
 class CreateGroupDialog extends StatefulWidget {
   final List<ChatUser> allUsers;
@@ -406,11 +407,9 @@ class _CreateGroupDialogState extends State<CreateGroupDialog>
                                 ),
                               ),
                       ),
-                    ),                    title: Text(
-                      OwnerUtils.getDisplayNameWithBadge(
-                        user.displayName.isNotEmpty ? user.displayName : 'No Name',
-                        user.email
-                      ),
+                    ),
+                    title: Text(
+                      user.displayName.isNotEmpty ? user.displayName : 'No Name',
                       style: const TextStyle(
                         fontWeight: FontWeight.w500,
                         fontSize: 13,
@@ -477,13 +476,23 @@ class _CreateGroupDialogState extends State<CreateGroupDialog>
 
     setState(() {
       _isLoading = true;
-    });
+    });    try {
+      // Get current user ID to ensure we don't duplicate
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) {
+        throw Exception('User not authenticated');
+      }
 
-    try {
+      // Filter out current user from selected users to avoid duplicates
+      final memberIds = _selectedUsers
+          .where((user) => user.id != currentUser.uid)
+          .map((user) => user.id)
+          .toList();
+
       final groupId = await _chatService.createGroupChat(
         name: _nameController.text.trim(),
         description: _descriptionController.text.trim(),
-        memberIds: _selectedUsers.map((user) => user.id).toList(),
+        memberIds: memberIds,
       );
 
       if (mounted) {

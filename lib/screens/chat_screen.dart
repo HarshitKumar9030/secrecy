@@ -10,6 +10,7 @@ import '../services/chat_service.dart';
 import '../models/message.dart';
 import '../models/user.dart';
 import 'profile_screen.dart';
+import 'group_info_screen.dart';
 import '../widgets/create_group_dialog.dart';
 import '../widgets/linkify_text.dart';
 import '../widgets/badged_user_name.dart';
@@ -155,28 +156,34 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                           size: 16,
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _selectedGroup?['name'] ?? 'Group',
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF2F3437),
+                      const SizedBox(width: 12),                      Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            if (_selectedGroup != null) {
+                              _openGroupInfo();
+                            }
+                          },
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _selectedGroup?['name'] ?? 'Group',
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF2F3437),
+                                ),
+                                overflow: TextOverflow.ellipsis,
                               ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            Text(
-                              '${(_selectedGroup?['memberIds'] as List?)?.length ?? 0} members',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Color(0xFF9B9A97),
+                              Text(
+                                '${(_selectedGroup?['memberIds'] as List?)?.length ?? 0} members',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF9B9A97),
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ] else ...[
@@ -251,8 +258,58 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                             color: const Color(0xFF9B9A97),
                           ),
                           padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                        ),
+                          constraints: const BoxConstraints(),                        ),
+                        // Voice call button
+                        if (_selectedUser != null)
+                          IconButton(
+                            onPressed: () {
+                              _initiateCall(isVideo: false);
+                            },
+                            icon: const Icon(
+                              Icons.call,
+                              color: Color(0xFF9B9A97),
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        // Video call button  
+                        if (_selectedUser != null)
+                          IconButton(
+                            onPressed: () {
+                              _initiateCall(isVideo: true);
+                            },
+                            icon: const Icon(
+                              Icons.videocam,
+                              color: Color(0xFF9B9A97),
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        // Group call buttons for groups
+                        if (_selectedGroup != null)
+                          IconButton(
+                            onPressed: () {
+                              _initiateGroupCall(isVideo: false);
+                            },
+                            icon: const Icon(
+                              Icons.call,
+                              color: Color(0xFF9B9A97),
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        if (_selectedGroup != null)
+                          IconButton(
+                            onPressed: () {
+                              _initiateGroupCall(isVideo: true);
+                            },
+                            icon: const Icon(
+                              Icons.videocam,
+                              color: Color(0xFF9B9A97),
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
                         if (_selectedUser != null)
                           IconButton(
                             onPressed: () {
@@ -1257,8 +1314,64 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
       [const Color(0xFFfa709a), const Color(0xFFfee140)],
       [const Color(0xFFa8edea), const Color(0xFFfed6e3)],
       [const Color(0xFFffecd2), const Color(0xFFfcb69f)],
-      [const Color(0xFFa8caba), const Color(0xFF5d4e75)],    ];
+      [const Color(0xFFa8caba), const Color(0xFF5d4e75)],
+    ];
     return colorPairs[hash % colorPairs.length];
+  }
+
+  // Call initiation methods
+  Future<void> _initiateCall({required bool isVideo}) async {
+    if (_selectedUser == null) return;
+    
+    try {
+      // TODO: Implement call functionality with WebRTC service
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${isVideo ? 'Video' : 'Voice'} call to ${_selectedUser!.displayName}'),
+          backgroundColor: Colors.blue,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to initiate call: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _initiateGroupCall({required bool isVideo}) async {
+    if (_selectedGroup == null) return;
+    
+    try {
+      // TODO: Implement group call functionality with WebRTC service
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${isVideo ? 'Video' : 'Voice'} call in ${_selectedGroup!['name']}'),
+          backgroundColor: Colors.blue,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to initiate group call: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _openGroupInfo() {
+    if (_selectedGroup == null) return;
+    
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => GroupInfoScreen(
+          group: _selectedGroup!,
+        ),
+      ),
+    );
   }
 }
 
