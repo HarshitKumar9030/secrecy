@@ -7,16 +7,20 @@ import 'package:uuid/uuid.dart';
 import '../models/message.dart';
 import '../models/user.dart';
 import '../models/call_log.dart';
+import '../models/chat_item.dart';
+import 'call_service.dart';
 
 class ChatService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
   final Uuid _uuid = const Uuid();
+  final CallService _callService = CallService();
   
   // Cache for messages and streams
   final Map<String, List<Message>> _messageCache = {};
   final Map<String, StreamController<List<Message>>> _messageControllers = {};
+  final Map<String, StreamController<List<ChatItem>>> _chatItemControllers = {};
   final Map<String, StreamSubscription?> _activeStreams = {};
   final Map<String, DocumentSnapshot?> _lastDocuments = {};
   final Map<String, bool> _hasMoreMessages = {};
@@ -1051,5 +1055,74 @@ class ChatService {
     List<String> ids = [userId1, userId2];
     ids.sort();
     return ids.join('_');
+  }
+
+  // Get combined chat items stream (messages + call logs)
+  Stream<List<ChatItem>> getChatItemsStream({String? recipientId, String? groupId}) {
+    final cacheKey = _getCacheKey(recipientId: recipientId, groupId: groupId);
+    
+    // Clear existing cache if it exists
+    if (_chatItemControllers.containsKey(cacheKey)) {
+      _chatItemControllers[cacheKey]?.close();
+      _chatItemControllers.remove(cacheKey);
+    }
+    
+    // Create fresh controller
+    _chatItemControllers[cacheKey] = StreamController<List<ChatItem>>.broadcast();
+    
+    // Combine messages and call logs streams
+    final messagesStream = getMessagesStream(recipientId: recipientId, groupId: groupId);
+    final callLogsStream = _callService.getCallLogsStream(recipientId: recipientId, groupId: groupId);
+      // Combine both streams
+    messagesStream.listen((messages) {
+      callLogsStream.first.then((callLogs) {
+        final combinedItems = <ChatItem>[];
+        
+        // Add messages as chat items
+        for (final message in messages) {
+          combinedItems.add(MessageChatItem(message));
+        }
+        
+        // Add call logs as chat items
+        for (final callLog in callLogs) {
+          combinedItems.add(CallLogChatItem(callLog));
+        }
+        
+        // Sort by timestamp (oldest first)
+        combinedItems.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        
+        // Emit combined items
+        if (_chatItemControllers.containsKey(cacheKey)) {
+          _chatItemControllers[cacheKey]!.add(combinedItems);
+        }
+      });
+    });
+    
+    // Also listen to call logs changes
+    callLogsStream.listen((callLogs) {
+      messagesStream.first.then((messages) {
+        final combinedItems = <ChatItem>[];
+        
+        // Add messages as chat items
+        for (final message in messages) {
+          combinedItems.add(MessageChatItem(message));
+        }
+        
+        // Add call logs as chat items
+        for (final callLog in callLogs) {
+          combinedItems.add(CallLogChatItem(callLog));
+        }
+        
+        // Sort by timestamp (oldest first)
+        combinedItems.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        
+        // Emit combined items
+        if (_chatItemControllers.containsKey(cacheKey)) {
+          _chatItemControllers[cacheKey]!.add(combinedItems);
+        }
+      });
+    });
+    
+    return _chatItemControllers[cacheKey]!.stream;
   }
 }

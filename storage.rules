@@ -1,0 +1,37 @@
+rules_version = '2';
+
+// Firebase Storage Security Rules
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Default rule: Allow read/write for authenticated users
+    match /{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Profile images folder
+    match /profile_images/{filename} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null 
+        && filename.matches('.*_.*\\.jpg'); // Matches format: userId_imageId.jpg
+    }
+      // Chat images folder  
+    match /chat_images/{filename} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && filename.matches('.*\\.(jpg|jpeg|png|gif)'); // Support multiple image formats
+    }
+    
+    // Chat videos folder
+    match /chat_videos/{filename} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && filename.matches('.*\\.(mp4|mov|avi|webm)'); // Support multiple video formats
+    }
+    
+    // Chat files folder (for generic file uploads)
+    match /chat_files/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+  }
+}

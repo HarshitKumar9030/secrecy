@@ -7,13 +7,19 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/auth_service.dart';
 import '../services/chat_service.dart';
+import '../services/call_service.dart';
+import '../services/permission_service.dart';
 import '../models/message.dart';
 import '../models/user.dart';
+import '../models/call_model.dart';
+import '../models/chat_item.dart';
 import 'profile_screen.dart';
 import 'group_info_screen.dart';
+import 'call_screen.dart';
 import '../widgets/create_group_dialog.dart';
 import '../widgets/linkify_text.dart';
 import '../widgets/badged_user_name.dart';
+import '../widgets/chat_item_widget.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -23,6 +29,7 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  final ChatService _chatService = ChatService();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _chatSearchController = TextEditingController();
   ChatUser? _selectedUser;
@@ -213,11 +220,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                           ),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [                            BadgedUserName(
+                      const SizedBox(width: 12),                      Expanded(
+                        child: GestureDetector(
+                          onTap: _selectedUser != null ? () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (context) => NewProfileScreen(
+                                  user: _selectedUser,
+                                  isEditable: false,
+                                  onMessageTap: () {
+                                    Navigator.of(context).pop();
+                                  },
+                                ),
+                              ),
+                            );
+                          } : null,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [                            BadgedUserName(
                               senderName: _selectedUser!.displayName,
                               senderEmail: _selectedUser!.email,
                               style: const TextStyle(
@@ -228,8 +248,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                               overflow: TextOverflow.ellipsis,
                             ),
                             Text(
-                              _chatService.formatLastSeen(_selectedUser!.lastSeen, _selectedUser!.isOnline),
-                              style: const TextStyle(
+                              _chatService.formatLastSeen(_selectedUser!.lastSeen, _selectedUser!.isOnline),                              style: const TextStyle(
                                 fontSize: 12,
                                 color: Color(0xFF9B9A97),
                               ),
@@ -237,8 +256,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                           ],
                         ),
                       ),
+                      )
                     ],
-                      // Profile and Search buttons
+
+                    // Profile and Search buttons
                     const Spacer(),
                     Row(
                       children: [
@@ -258,83 +279,92 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                             color: const Color(0xFF9B9A97),
                           ),
                           padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),                        ),
-                        // Voice call button
-                        if (_selectedUser != null)
-                          IconButton(
-                            onPressed: () {
-                              _initiateCall(isVideo: false);
+                          constraints: const BoxConstraints(),                        ),                        
+                        // Clean Call Button - for both private and group chats
+                        if (_selectedUser != null || _selectedGroup != null)
+                          PopupMenuButton<String>(
+                            onSelected: (value) {
+                              if (value == 'voice') {
+                                if (_selectedUser != null) {
+                                  _initiateCall(isVideo: false);
+                                } else {
+                                  _initiateGroupCall(isVideo: false);
+                                }
+                              } else if (value == 'video') {
+                                if (_selectedUser != null) {
+                                  _initiateCall(isVideo: true);
+                                } else {
+                                  _initiateGroupCall(isVideo: true);
+                                }
+                              }
                             },
                             icon: const Icon(
                               Icons.call,
                               color: Color(0xFF9B9A97),
+                              size: 20,
                             ),
+                            offset: const Offset(-40, 45),
+                            color: Colors.white,
+                            elevation: 8,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            splashRadius: 20,
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
-                          ),
-                        // Video call button  
-                        if (_selectedUser != null)
-                          IconButton(
-                            onPressed: () {
-                              _initiateCall(isVideo: true);
-                            },
-                            icon: const Icon(
-                              Icons.videocam,
-                              color: Color(0xFF9B9A97),
-                            ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                        // Group call buttons for groups
-                        if (_selectedGroup != null)
-                          IconButton(
-                            onPressed: () {
-                              _initiateGroupCall(isVideo: false);
-                            },
-                            icon: const Icon(
-                              Icons.call,
-                              color: Color(0xFF9B9A97),
-                            ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                        if (_selectedGroup != null)
-                          IconButton(
-                            onPressed: () {
-                              _initiateGroupCall(isVideo: true);
-                            },
-                            icon: const Icon(
-                              Icons.videocam,
-                              color: Color(0xFF9B9A97),
-                            ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                        if (_selectedUser != null)
-                          IconButton(
-                            onPressed: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (context) => NewProfileScreen(
-                                    user: _selectedUser,
-                                    isEditable: false,
-                                    onMessageTap: () {
-                                      Navigator.of(context).pop();
-                                    },
-                                  ),
+                            itemBuilder: (context) => [
+                              PopupMenuItem(
+                                value: 'voice',
+                                height: 48,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.call,
+                                      size: 18,
+                                      color: const Color(0xFF0F8B0F),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    const Text(
+                                      'Voice Call',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                        color: Color(0xFF37352F),
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                              );
-                            },
-                            icon: const Icon(
-                              Icons.person,
-                              color: Color(0xFF9B9A97),
-                            ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
+                              ),
+                              PopupMenuItem(
+                                value: 'video',
+                                height: 48,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.videocam,
+                                      size: 18,
+                                      color: const Color(0xFF0B6BCB),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    const Text(
+                                      'Video Call',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                        color: Color(0xFF37352F),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
                       ],
                     ),
-                  ],                ),
+                  ],
+                ),
               ),
               
               // Search bar (when active)
@@ -1317,48 +1347,131 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
       [const Color(0xFFa8caba), const Color(0xFF5d4e75)],
     ];
     return colorPairs[hash % colorPairs.length];
-  }
-
-  // Call initiation methods
+  }  // Call initiation methods
   Future<void> _initiateCall({required bool isVideo}) async {
     if (_selectedUser == null) return;
     
     try {
-      // TODO: Implement call functionality with WebRTC service
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${isVideo ? 'Video' : 'Voice'} call to ${_selectedUser!.displayName}'),
-          backgroundColor: Colors.blue,
-        ),
+      // Request call permissions first
+      final hasPermissions = await PermissionService.requestCallPermissions();
+      if (!hasPermissions) {
+        if (mounted) {
+          PermissionService.showPermissionDialog(context, 'camera and microphone');
+        }
+        return;
+      }
+
+      final callService = CallService();
+      final callId = await callService.initiateCall(
+        recipientId: _selectedUser!.id,
+        recipientName: _selectedUser!.displayName.isNotEmpty 
+            ? _selectedUser!.displayName 
+            : _selectedUser!.email.split('@')[0],
+        recipientEmail: _selectedUser!.email,
+        type: isVideo ? CallType.video : CallType.voice,
       );
+      
+      // Navigate to call screen
+      if (mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => Provider<CallService>.value(
+              value: callService,
+              child: CallScreen(
+                call: Call(
+                  id: callId,
+                  callerId: _auth.currentUser?.uid ?? '',
+                  callerName: _auth.currentUser?.displayName ?? 
+                            _auth.currentUser?.email?.split('@')[0] ?? 'Unknown',
+                  callerEmail: _auth.currentUser?.email ?? '',
+                  participantIds: [_auth.currentUser?.uid ?? '', _selectedUser!.id],
+                  participantNames: {
+                    _auth.currentUser?.uid ?? '': _auth.currentUser?.displayName ?? 
+                                               _auth.currentUser?.email?.split('@')[0] ?? 'Unknown',
+                    _selectedUser!.id: _selectedUser!.displayName.isNotEmpty 
+                        ? _selectedUser!.displayName 
+                        : _selectedUser!.email.split('@')[0],
+                  },
+                  type: isVideo ? CallType.video : CallType.voice,
+                  state: CallState.initiating,
+                  createdAt: DateTime.now(),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to initiate call: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to initiate call: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
-
   Future<void> _initiateGroupCall({required bool isVideo}) async {
     if (_selectedGroup == null) return;
     
     try {
-      // TODO: Implement group call functionality with WebRTC service
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${isVideo ? 'Video' : 'Voice'} call in ${_selectedGroup!['name']}'),
-          backgroundColor: Colors.blue,
-        ),
+      // Request call permissions first
+      final hasPermissions = await PermissionService.requestCallPermissions();
+      if (!hasPermissions) {
+        if (mounted) {
+          PermissionService.showPermissionDialog(context, 'camera and microphone');
+        }
+        return;
+      }
+
+      final callService = CallService();
+      final memberIds = List<String>.from(_selectedGroup!['memberIds'] ?? []);
+      
+      final callId = await callService.initiateCall(
+        recipientId: memberIds.first,
+        recipientName: _selectedGroup!['name'] ?? 'Group',
+        recipientEmail: '',
+        type: isVideo ? CallType.video : CallType.voice,
+        groupId: _selectedGroupId,
+        groupName: _selectedGroup!['name'],
+        additionalParticipants: memberIds.skip(1).toList(),
       );
+      
+      // Navigate to call screen
+      if (mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => Provider<CallService>.value(
+              value: callService,
+              child: CallScreen(
+                call: Call(
+                  id: callId,
+                  callerId: _auth.currentUser?.uid ?? '',
+                  callerName: _auth.currentUser?.displayName ?? 
+                            _auth.currentUser?.email?.split('@')[0] ?? 'Unknown',
+                  callerEmail: _auth.currentUser?.email ?? '',
+                  participantIds: memberIds,
+                  participantNames: {},
+                  groupId: _selectedGroupId,
+                  groupName: _selectedGroup!['name'],
+                  type: isVideo ? CallType.video : CallType.voice,
+                  state: CallState.initiating,
+                  createdAt: DateTime.now(),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to initiate group call: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to initiate group call: $e'),
+            backgroundColor: Colors.red,
+          ),        );
+      }
     }
   }
 
@@ -1447,9 +1560,17 @@ class _ChatMessagesViewState extends State<ChatMessagesView> {
       }
     }
   }
-
   Future<void> _sendImage() async {
     try {
+      // Request media permissions first
+      final hasPermissions = await PermissionService.requestMediaPermissions();
+      if (!hasPermissions) {
+        if (mounted) {
+          PermissionService.showPermissionDialog(context, 'storage and camera');
+        }
+        return;
+      }
+
       final XFile? image = await _imagePicker.pickImage(
         source: ImageSource.gallery,
         maxWidth: 1920,
@@ -1485,9 +1606,17 @@ class _ChatMessagesViewState extends State<ChatMessagesView> {
       }
     }
   }
-
   Future<void> _sendVideo() async {
     try {
+      // Request media permissions first
+      final hasPermissions = await PermissionService.requestMediaPermissions();
+      if (!hasPermissions) {
+        if (mounted) {
+          PermissionService.showPermissionDialog(context, 'storage and camera');
+        }
+        return;
+      }
+
       final XFile? video = await _imagePicker.pickVideo(
         source: ImageSource.gallery,
         maxDuration: const Duration(minutes: 2),
@@ -1564,14 +1693,13 @@ class _ChatMessagesViewState extends State<ChatMessagesView> {
         // Messages list
         Expanded(
           child: Container(
-            color: Colors.white,            child: StreamBuilder<List<Message>>(
+            color: Colors.white,            child: StreamBuilder<List<ChatItem>>(
               stream: widget.searchQuery != null && widget.searchQuery!.trim().isNotEmpty
-                  ? widget.chatService.searchMessagesInChat(
-                      widget.searchQuery!,
+                  ? widget.chatService.getMessagesStream(
                       recipientId: widget.selectedUser?.id,
                       groupId: widget.selectedGroupId,
-                    )
-                  : widget.chatService.getMessagesStream(
+                    ).map((messages) => messages.map((m) => MessageChatItem(m)).toList())
+                  : widget.chatService.getChatItemsStream(
                       recipientId: widget.selectedUser?.id,
                       groupId: widget.selectedGroupId,
                     ),
@@ -1588,7 +1716,7 @@ class _ChatMessagesViewState extends State<ChatMessagesView> {
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          'Error loading messages',
+                          'Error loading chat',
                           style: TextStyle(
                             fontSize: 18,
                             color: Colors.red.shade600,
@@ -1612,9 +1740,9 @@ class _ChatMessagesViewState extends State<ChatMessagesView> {
                   );
                 }
 
-                final messages = snapshot.data ?? [];
+                final chatItems = snapshot.data ?? [];
 
-                if (messages.isEmpty) {
+                if (chatItems.isEmpty) {
                   return Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -1663,11 +1791,10 @@ class _ChatMessagesViewState extends State<ChatMessagesView> {
                       _loadMoreMessages();
                     }
                     return false;
-                  },
-                  child: ListView.builder(
+                  },                  child: ListView.builder(
                     controller: _scrollController,
                     padding: const EdgeInsets.all(20),
-                    itemCount: messages.length + (widget.chatService.hasMoreMessages(
+                    itemCount: chatItems.length + (widget.chatService.hasMoreMessages(
                       recipientId: widget.selectedUser?.id,
                       groupId: widget.selectedGroupId,
                     ) ? 1 : 0),
@@ -1692,19 +1819,19 @@ class _ChatMessagesViewState extends State<ChatMessagesView> {
                         );
                       }
                       
-                      // Adjust index for messages
-                      final messageIndex = widget.chatService.hasMoreMessages(
+                      // Adjust index for chat items
+                      final itemIndex = widget.chatService.hasMoreMessages(
                         recipientId: widget.selectedUser?.id,
                         groupId: widget.selectedGroupId,
                       ) ? index - 1 : index;
                       
-                      if (messageIndex < 0 || messageIndex >= messages.length) {
+                      if (itemIndex < 0 || itemIndex >= chatItems.length) {
                         return const SizedBox.shrink();
                       }
                       
-                      final message = messages[messageIndex];
-                      return NotionMessageBubble(
-                        message: message,
+                      final chatItem = chatItems[itemIndex];
+                      return ChatItemWidget(
+                        chatItem: chatItem,
                         chatService: widget.chatService,
                       );
                     },

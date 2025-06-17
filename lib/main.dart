@@ -6,7 +6,10 @@ import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:provider/provider.dart';
 import 'firebase_options.dart';
 import 'services/auth_service.dart';
+import 'services/call_service.dart';
 import 'screens/auth_wrapper.dart';
+import 'screens/call_screen.dart';
+import 'models/call_model.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -45,13 +48,20 @@ class SecrecyApp extends StatelessWidget {
         systemNavigationBarColor: Colors.white,
         systemNavigationBarIconBrightness: Brightness.dark,
       ),
-    );
-
-    return ChangeNotifierProvider(
-      create: (context) => AuthService(),
-      child: MaterialApp(
-        title: 'Secrecy',
-        theme: ThemeData(
+    );    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (context) => AuthService()),
+        Provider(create: (context) => CallService()),
+      ],      child: Consumer<CallService>(
+        builder: (context, callService, child) {
+          return StreamBuilder<Call?>(
+            stream: callService.callStateStream,
+            builder: (context, callSnapshot) {
+              final call = callSnapshot.data;
+              
+              return MaterialApp(
+                title: 'Secrecy',
+                theme: ThemeData(
           fontFamily: 'SF Pro Display',
           primaryColor: const Color(0xFF2F3437),
           scaffoldBackgroundColor: const Color(0xFFF7F6F3),
@@ -106,18 +116,22 @@ class SecrecyApp extends StatelessWidget {
           textTheme: const TextTheme(
             headlineMedium: TextStyle(
               color: Color(0xFF2F3437),
-              fontWeight: FontWeight.w700,
-            ),
+              fontWeight: FontWeight.w700,            ),
             bodyLarge: TextStyle(
               color: Color(0xFF2F3437),
             ),
             bodyMedium: TextStyle(
-              color: Color(0xFF2F3437),
-            ),
+              color: Color(0xFF2F3437),            ),
           ),
         ),
-        home: const AuthWrapper(),
+        home: call != null && call.state == CallState.ringing
+            ? CallScreen(call: call)
+            : const AuthWrapper(),
         debugShowCheckedModeBanner: false,
+              );
+            },
+          );
+        },
       ),
     );
   }
