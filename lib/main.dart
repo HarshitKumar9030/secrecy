@@ -38,7 +38,9 @@ void main() async {
 }
 
 class SecrecyApp extends StatelessWidget {
-  const SecrecyApp({super.key});  @override
+  const SecrecyApp({super.key});
+
+  @override
   Widget build(BuildContext context) {
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
@@ -48,19 +50,40 @@ class SecrecyApp extends StatelessWidget {
         systemNavigationBarColor: Colors.white,
         systemNavigationBarIconBrightness: Brightness.dark,
       ),
-    );    return MultiProvider(
+    );
+
+    return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (context) => AuthService()),
-        ChangeNotifierProvider(create: (context) => CallService()),
-      ],child: Consumer<CallService>(
+        ChangeNotifierProvider(create: (_) => CallService()),
+        StreamProvider<Call?>(
+          create: (context) => context.read<CallService>().callStateStream,
+          initialData: null,
+        ),
+      ],
+      child: Consumer<CallService>(
         builder: (context, callService, child) {
           return StreamBuilder<Call?>(
             stream: callService.callStateStream,
             builder: (context, callSnapshot) {
               final call = callSnapshot.data;
               
-              return MaterialApp(
+              // Add debugging but reduce verbosity
+              if (call != null) {
+                print('🔥 Main navigation - Call state: ${call.state}');
+              }
+                // Determine if we should show call screen
+              final shouldShowCallScreen = call != null && 
+                  (call.state == CallState.ringing || 
+                   call.state == CallState.connecting || 
+                   call.state == CallState.connected);
+                   
+              if (shouldShowCallScreen) {
+                print('🚀 MAIN: Showing CallScreen for call: ${call.id}');
+              }
+                return MaterialApp(
                 title: 'Secrecy',
+                navigatorKey: GlobalKey<NavigatorState>(),
                 theme: ThemeData(
           fontFamily: 'SF Pro Display',
           primaryColor: const Color(0xFF2F3437),
@@ -122,13 +145,18 @@ class SecrecyApp extends StatelessWidget {
             ),
             bodyMedium: TextStyle(
               color: Color(0xFF2F3437),            ),
-          ),
-        ),        home: call != null && (call.state == CallState.ringing || 
-                                 call.state == CallState.connecting || 
-                                 call.state == CallState.connected)
+          ),        ),        home: shouldShowCallScreen
             ? CallScreen(call: call)
             : const AuthWrapper(),
         debugShowCheckedModeBanner: false,
+        builder: (context, child) {
+          // Add error boundary for navigation crashes
+          return child ?? const Scaffold(
+            body: Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        },
               );
             },
           );

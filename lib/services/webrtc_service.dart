@@ -7,8 +7,8 @@ class WebRTCService extends ChangeNotifier {
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   MediaStream? _remoteStream;
-  
-  final Map<String, dynamic> _iceServers = {
+  bool _disposed = false;
+    final Map<String, dynamic> _iceServers = {
     'iceServers': [
       {'urls': 'stun:stun.l.google.com:19302'},
       {'urls': 'stun:stun1.l.google.com:19302'},
@@ -17,6 +17,7 @@ class WebRTCService extends ChangeNotifier {
   };
   
   final Map<String, dynamic> _configuration = {
+    'sdpSemantics': 'unified-plan', // Use Unified Plan SDP semantics
     'mandatory': {},
     'optional': [
       {'DtlsSrtpKeyAgreement': true},
@@ -91,20 +92,22 @@ class WebRTCService extends ChangeNotifier {
       debugPrint('Received ICE candidate');
       await _handleIceCandidate(data);
     });
-    
-    // Listen for participant video/audio toggles
+      // Listen for participant video/audio toggles
     _socket!.on('participant-video-toggle', (data) {
       debugPrint('Participant toggled video: ${data['isVideoEnabled']}');
-      notifyListeners();
+      if (!_disposed) {
+        notifyListeners();
+      }
     });
     
     _socket!.on('participant-audio-toggle', (data) {
       debugPrint('Participant toggled audio: ${data['isAudioEnabled']}');
-      notifyListeners();
+      if (!_disposed) {
+        notifyListeners();
+      }
     });
   }
-  
-  // Create peer connection
+    // Create peer connection
   Future<void> _createPeerConnection() async {
     _peerConnection = await createPeerConnection(_iceServers, _configuration);
       // Handle ice candidates
@@ -115,18 +118,23 @@ class WebRTCService extends ChangeNotifier {
         'candidate': candidate.toMap(),
       });
     };
-    
-    // Handle remote stream
-    _peerConnection!.onAddStream = (MediaStream stream) {
-      debugPrint('Received remote stream');
-      _remoteStream = stream;
-      notifyListeners();
+      // Handle remote tracks (replaces onAddStream)
+    _peerConnection!.onTrack = (RTCTrackEvent event) {
+      debugPrint('Received remote track');
+      if (event.streams.isNotEmpty) {
+        _remoteStream = event.streams[0];
+        if (!_disposed) {
+          notifyListeners();
+        }
+      }
     };
     
     // Handle connection state changes
     _peerConnection!.onConnectionState = (RTCPeerConnectionState state) {
       debugPrint('Connection state: $state');
-      notifyListeners();
+      if (!_disposed) {
+        notifyListeners();
+      }
     };
     
     // Handle ice connection state changes
@@ -139,8 +147,7 @@ class WebRTCService extends ChangeNotifier {
       }
     };
   }
-  
-  // Get user media (camera and microphone)
+    // Get user media (camera and microphone)
   Future<void> _getUserMedia() async {
     final Map<String, dynamic> mediaConstraints = {
       'audio': _isAudioEnabled,
@@ -154,12 +161,15 @@ class WebRTCService extends ChangeNotifier {
     try {
       _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
       
-      // Add local stream to peer connection
+      // Add tracks to peer connection (replaces addStream)
       if (_peerConnection != null && _localStream != null) {
-        await _peerConnection!.addStream(_localStream!);
-      }
+        for (final track in _localStream!.getTracks()) {
+          await _peerConnection!.addTrack(track, _localStream!);
+        }      }
       
-      notifyListeners();
+      if (!_disposed) {
+        notifyListeners();
+      }
       debugPrint('Local media stream obtained');
     } catch (e) {
       debugPrint('Error getting user media: $e');
@@ -260,11 +270,12 @@ class WebRTCService extends ChangeNotifier {
         // Notify peers about video toggle
       _socket?.emit('toggle-video', {
         'roomId': _roomId,
-        'userId': _socket?.id,
-        'isVideoEnabled': _isVideoEnabled,
+        'userId': _socket?.id,        'isVideoEnabled': _isVideoEnabled,
       });
       
-      notifyListeners();
+      if (!_disposed) {
+        notifyListeners();
+      }
       debugPrint('Video toggled: $_isVideoEnabled');
     }
   }
@@ -281,11 +292,12 @@ class WebRTCService extends ChangeNotifier {
         // Notify peers about audio toggle
       _socket?.emit('toggle-audio', {
         'roomId': _roomId,
-        'userId': _socket?.id,
-        'isAudioEnabled': _isAudioEnabled,
+        'userId': _socket?.id,        'isAudioEnabled': _isAudioEnabled,
       });
       
-      notifyListeners();
+      if (!_disposed) {
+        notifyListeners();
+      }
       debugPrint('Audio toggled: $_isAudioEnabled');
     }
   }
@@ -296,26 +308,53 @@ class WebRTCService extends ChangeNotifier {
       _isFrontCameraEnabled = !_isFrontCameraEnabled;
       
       final videoTracks = _localStream!.getVideoTracks();
-      for (final track in videoTracks) {
-        await track.switchCamera();
+      for (final track in videoTracks) {        await track.switchCamera();
       }
       
-      notifyListeners();
+      if (!_disposed) {
+        notifyListeners();
+      }
       debugPrint('Camera switched: front = $_isFrontCameraEnabled');
     }
   }
-  
-  // End call and cleanup
+    // End call and cleanup
   Future<void> endCall() async {
     try {
-      // Stop local stream
+      debugPrint('Starting WebRTC cleanup...');
+      
+      // Remove socket listeners first to prevent any new events
+      if (_socket != null) {
+        _socket!.off('offer');
+        _socket!.off('answer');
+        _socket!.off('ice-candidate');
+        _socket!.off('participant-video-toggle');
+        _socket!.off('participant-audio-toggle');
+      }
+      
+      // Stop all tracks before disposing streams
       if (_localStream != null) {
+        final tracks = _localStream!.getTracks();
+        for (final track in tracks) {
+          try {
+            await track.stop();
+          } catch (e) {
+            debugPrint('Error stopping local track: $e');
+          }
+        }
         await _localStream!.dispose();
         _localStream = null;
       }
       
       // Stop remote stream
       if (_remoteStream != null) {
+        final tracks = _remoteStream!.getTracks();
+        for (final track in tracks) {
+          try {
+            await track.stop();
+          } catch (e) {
+            debugPrint('Error stopping remote track: $e');
+          }
+        }
         await _remoteStream!.dispose();
         _remoteStream = null;
       }
@@ -325,25 +364,27 @@ class WebRTCService extends ChangeNotifier {
         await _peerConnection!.close();
         _peerConnection = null;
       }
-        // Remove socket listeners
-      _socket?.off('offer');
-      _socket?.off('answer');
-      _socket?.off('ice-candidate');
-      _socket?.off('participant-video-toggle');
-      _socket?.off('participant-audio-toggle');
       
+      // Clear references
       _socket = null;
       _roomId = null;
-      
+      _isHost = false;      // Notify listeners after cleanup is complete
       notifyListeners();
       debugPrint('WebRTC call ended and cleaned up');
     } catch (e) {
       debugPrint('Error ending WebRTC call: $e');
     }
   }
-  
+    @override
+  void notifyListeners() {
+    if (!_disposed) {
+      super.notifyListeners();
+    }
+  }
+
   @override
   void dispose() {
+    _disposed = true;
     endCall();
     super.dispose();
   }

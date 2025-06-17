@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import '../models/call_log.dart';
 import '../models/call_model.dart';
+import '../services/call_service.dart';
 
 class CallLogMessage extends StatelessWidget {
   final CallLog callLog;
@@ -302,12 +304,69 @@ class CallLogMessage extends StatelessWidget {
   }
 
   void _startCall(BuildContext context, CallType type) {
-    // TODO: Implement call initiation using CallService
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Starting ${type == CallType.video ? 'video' : 'voice'} call with ${callLog.displayTitle}'),
-        backgroundColor: Colors.blue,
-      ),
-    );
+    try {
+      final callService = context.read<CallService>();
+      
+      if (callLog.groupId != null) {
+        // Group call
+        _initiateGroupCall(context, callService, type);
+      } else {
+        // Private call
+        _initiatePrivateCall(context, callService, type);
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to start call: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+  Future<void> _initiatePrivateCall(BuildContext context, CallService callService, CallType type) async {
+    try {
+      await callService.initiateCall(
+        recipientId: callLog.participantId,
+        recipientName: callLog.participantName,
+        recipientEmail: callLog.participantEmail,
+        type: type,
+      );
+      
+      // Navigation will be handled automatically by main.dart based on call state
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to initiate call: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+  Future<void> _initiateGroupCall(BuildContext context, CallService callService, CallType type) async {
+    try {
+      // For group calls, we need more information about participants
+      // This is a simplified implementation
+      await callService.initiateCall(
+        recipientId: '', // Group calls don't have a single recipient
+        recipientName: callLog.groupName ?? 'Group',
+        recipientEmail: '',
+        type: type,
+        groupId: callLog.groupId,
+        groupName: callLog.groupName,
+      );
+      
+      // Navigation will be handled automatically by main.dart based on call state
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to initiate group call: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 }

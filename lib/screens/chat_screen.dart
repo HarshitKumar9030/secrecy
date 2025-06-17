@@ -16,7 +16,6 @@ import '../models/call_model.dart';
 import '../models/chat_item.dart';
 import 'profile_screen.dart';
 import 'group_info_screen.dart';
-import 'call_screen.dart';
 import 'credits_screen.dart';
 import '../widgets/create_group_dialog.dart';
 import '../widgets/linkify_text.dart';
@@ -31,7 +30,6 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  final ChatService _chatService = ChatService();
-  final FirebaseAuth _auth = FirebaseAuth.instance;
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _chatSearchController = TextEditingController();
   ChatUser? _selectedUser;
@@ -1094,10 +1092,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
           PermissionService.showPermissionDialog(context, 'camera and microphone');
         }
         return;
-      }
-
-      final callService = CallService();
-      final callId = await callService.initiateCall(
+      }      final callService = context.read<CallService>();
+      await callService.initiateCall(
         recipientId: _selectedUser!.id,
         recipientName: _selectedUser!.displayName.isNotEmpty 
             ? _selectedUser!.displayName 
@@ -1106,36 +1102,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
         type: isVideo ? CallType.video : CallType.voice,
       );
       
-      // Navigate to call screen
-      if (mounted) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => Provider<CallService>.value(
-              value: callService,
-              child: CallScreen(
-                call: Call(
-                  id: callId,
-                  callerId: _auth.currentUser?.uid ?? '',
-                  callerName: _auth.currentUser?.displayName ?? 
-                            _auth.currentUser?.email?.split('@')[0] ?? 'Unknown',
-                  callerEmail: _auth.currentUser?.email ?? '',
-                  participantIds: [_auth.currentUser?.uid ?? '', _selectedUser!.id],
-                  participantNames: {
-                    _auth.currentUser?.uid ?? '': _auth.currentUser?.displayName ?? 
-                                               _auth.currentUser?.email?.split('@')[0] ?? 'Unknown',
-                    _selectedUser!.id: _selectedUser!.displayName.isNotEmpty 
-                        ? _selectedUser!.displayName 
-                        : _selectedUser!.email.split('@')[0],
-                  },
-                  type: isVideo ? CallType.video : CallType.voice,
-                  state: CallState.initiating,
-                  createdAt: DateTime.now(),
-                ),
-              ),
-            ),
-          ),
-        );
-      }
+      // Navigation will be handled automatically by main.dart based on call state
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1158,12 +1125,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
           PermissionService.showPermissionDialog(context, 'camera and microphone');
         }
         return;
-      }
-
-      final callService = CallService();
+      }      final callService = context.read<CallService>();
       final memberIds = List<String>.from(_selectedGroup!['memberIds'] ?? []);
       
-      final callId = await callService.initiateCall(
+      await callService.initiateCall(
         recipientId: memberIds.first,
         recipientName: _selectedGroup!['name'] ?? 'Group',
         recipientEmail: '',
@@ -1173,32 +1138,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
         additionalParticipants: memberIds.skip(1).toList(),
       );
       
-      // Navigate to call screen
-      if (mounted) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => Provider<CallService>.value(
-              value: callService,
-              child: CallScreen(
-                call: Call(
-                  id: callId,
-                  callerId: _auth.currentUser?.uid ?? '',
-                  callerName: _auth.currentUser?.displayName ?? 
-                            _auth.currentUser?.email?.split('@')[0] ?? 'Unknown',
-                  callerEmail: _auth.currentUser?.email ?? '',
-                  participantIds: memberIds,
-                  participantNames: {},
-                  groupId: _selectedGroupId,
-                  groupName: _selectedGroup!['name'],
-                  type: isVideo ? CallType.video : CallType.voice,
-                  state: CallState.initiating,
-                  createdAt: DateTime.now(),
-                ),
-              ),
-            ),
-          ),
-        );
-      }
+      // Navigation will be handled automatically by main.dart based on call state
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -1,0 +1,40 @@
+{
+  "name": "secrecy-signaling-server",
+  "version": "1.0.0",
+  "description": "WebRTC signaling server for Secrecy app",
+  "main": "signaling-server.js",
+  "scripts": {
+    "start": "node signaling-server.js",
+    "dev": "nodemon signaling-server.js",
+    "pm2-start": "pm2 start signaling-server.js --name secrecy-signaling",
+    "pm2-stop": "pm2 stop secrecy-signaling",
+    "pm2-restart": "pm2 restart secrecy-signaling",
+    "pm2-delete": "pm2 delete secrecy-signaling",
+    "pm2-logs": "pm2 logs secrecy-signaling"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "cors": "^2.8.5",
+    "compression": "^1.7.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "keywords": [
+    "webrtc",
+    "signaling",
+    "socket.io",
+    "video-call",
+    "flutter"
+  ],
+  "author": "Secrecy Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/secrecy.git"
+  }
+}

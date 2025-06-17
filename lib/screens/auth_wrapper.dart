@@ -13,22 +13,19 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> {
-  CallService? _callService;
   bool _hasStartedListening = false;
 
   @override
   Widget build(BuildContext context) {
     return Consumer<AuthService>(
       builder: (context, authService, child) {
-        // Get the call service instance
-        _callService ??= Provider.of<CallService>(context, listen: false);
-        
-        if (authService.isAuthenticated) {
-          // Start listening for incoming calls when user is authenticated
+        if (authService.isAuthenticated) {          // Start listening for incoming calls when user is authenticated
           if (!_hasStartedListening) {
             _hasStartedListening = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              _callService?.startListeningForIncomingCalls();
+              final callService = context.read<CallService>();
+              callService.initializeSocket();
+              callService.startListeningForIncomingCalls();
             });
           }
           

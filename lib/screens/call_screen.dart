@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import '../models/call_model.dart';
 import '../services/call_service.dart';
 import '../services/auth_service.dart';
-import 'chat_screen.dart';
 
 class CallScreen extends StatefulWidget {
   final Call call;
@@ -58,28 +57,25 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
     final currentUser = authService.user;
-    
-    return Scaffold(
+      return Scaffold(
       backgroundColor: const Color(0xFF1A1A1A),
-      body: StreamBuilder<Call?>(
-        stream: context.read<CallService>().callStateStream,
+      body: StreamBuilder<Call?>(        stream: context.watch<CallService>().callStateStream,
         initialData: widget.call,
         builder: (context, snapshot) {
           final call = snapshot.data ?? widget.call;
           
-          // Auto close if call ended
-          if (call.isEnded) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (context) => const ChatScreen()),
-                (route) => false,
-              );
-            });
-          }
-            return SafeArea(
+          // Don't auto-navigate - let main.dart handle navigation based on call state
+          
+          return SafeArea(
             child: _buildNotionStyleCallUI(call, currentUser),
           );
         },
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _forceTerminateCall(widget.call.id),
+        backgroundColor: Colors.red[700],
+        icon: const Icon(Icons.block, color: Colors.white),
+        label: const Text('Force End', style: TextStyle(color: Colors.white)),
       ),
     );
   }
@@ -215,8 +211,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       // Incoming call buttons
       return Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          // Decline button
+        children: [          // Decline button
           _buildActionButton(
             icon: Icons.call_end,
             color: const Color(0xFFFF3B30),
@@ -351,7 +346,30 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
 
   void _declineCall(String callId) {
     context.read<CallService>().declineCall(callId);
-    Navigator.of(context).pop();
+  }
+
+  void _forceTerminateCall(String callId) {
+    // Show confirmation dialog first
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Force Terminate Call'),
+        content: const Text('This will forcefully terminate the persistent call. Are you sure?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              context.read<CallService>().forceTerminateCall(callId);
+            },
+            child: const Text('Force Terminate'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _endCall(String callId) {
@@ -615,8 +633,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
             fontWeight: FontWeight.w400,
           ),
           textAlign: TextAlign.center,
-        ),
-      ],
+        ),      ],
     );
   }
 
