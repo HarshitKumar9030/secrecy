@@ -1,16 +1,20 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 import 'package:uuid/uuid.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../models/call_model.dart';
 import '../models/call_log.dart';
+import 'webrtc_service.dart';
 
-class CallService {
+class CallService extends ChangeNotifier {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final Uuid _uuid = const Uuid();
+  final WebRTCService _webrtcService = WebRTCService();
   
   // Socket connection for real-time call events
   IO.Socket? _socket;
@@ -25,15 +29,17 @@ class CallService {
   bool _isRinging = false;
   Timer? _ringingTimer;
   Timer? _callTimeoutTimer;
-  
-  // Call timeout duration (should match server)
+    // Call timeout duration (should match server)
   static const int callTimeoutDuration = 45; // seconds
   static const int ringDuration = 30; // seconds
   
-  Stream<Call?> get callStateStream => _callStateController.stream;
+  // Server configuration - replace YOUR_VM_IP with actual server IP
+  static const String signalingServerUrl = 'http://34.131.45.104:3000';
+    Stream<Call?> get callStateStream => _callStateController.stream;
   Stream<Map<String, dynamic>> get incomingCallStream => _incomingCallController.stream;
   Call? get currentCall => _currentCall;
   bool get isInCall => _currentCall?.isActive == true;
+  WebRTCService get webrtcService => _webrtcService;
 
   // Initialize call for 1-on-1 chat
   Future<String> initiateCall({
@@ -76,9 +82,10 @@ class CallService {
       type: type,
       state: CallState.initiating,
       createdAt: DateTime.now(),
-    );
-
-    try {
+    );    try {
+      // Enable wakelock when initiating call
+      await WakelockPlus.enable();
+      
       // Create call document
       await _firestore.collection('calls').doc(callId).set(call.toMap());
       
@@ -88,18 +95,32 @@ class CallService {
       // Start listening to call updates
       _listenToCall(callId);
       
+      // Emit call initiation to signaling server
+      if (_socket != null && _socket!.connected) {
+        _socket!.emit('initiate-call', {
+          'roomId': callId,
+          'callerId': user.uid,
+          'callerName': user.displayName ?? user.email?.split('@')[0] ?? 'Unknown',
+          'participantIds': participantIds.where((id) => id != user.uid).toList(),
+          'isVideo': type == CallType.video,
+          'isGroup': groupId != null || (additionalParticipants != null && additionalParticipants.isNotEmpty),
+        });
+      }
+      
       return callId;
     } catch (e) {
       print('Error initiating call: $e');
+      // Disable wakelock on error
+      await WakelockPlus.disable();
       rethrow;
     }
   }
-
   // Initialize socket connection for real-time call events
-  void initializeSocket(String serverUrl) {
-    _socket = IO.io(serverUrl, <String, dynamic>{
+  void initializeSocket([String? serverUrl]) {
+    final url = serverUrl ?? signalingServerUrl;
+    _socket = IO.io(url, <String, dynamic>{
       'transports': ['websocket'],
-      'autoConnect': false,
+      'autoConnect': true,
     });
     
     _socket!.connect();
@@ -233,18 +254,33 @@ class CallService {
     }
     
     return callId;
-  }
-  
-  // Accept incoming call
+  }    // Accept incoming call
   Future<void> acceptCall(String callId) async {
     final user = _auth.currentUser;
     if (user == null) return;
+    
+    // Enable wakelock to keep screen on during call
+    await WakelockPlus.enable();
+    
+    // Join the call room
+    joinCallRoom(callId);
     
     if (_socket != null && _socket!.connected) {
       _socket!.emit('accept-call', {
         'roomId': callId,
         'userId': user.uid,
       });
+    }
+    
+    // Initialize WebRTC for the call
+    if (_currentCall != null && _socket != null) {
+      await _webrtcService.initialize(
+        socket: _socket!,
+        roomId: callId,
+        isHost: false, // Receiver is not the host
+        enableVideo: _currentCall!.type == CallType.video,
+        enableAudio: true,
+      );
     }
     
     // Stop ringing
@@ -256,13 +292,16 @@ class CallService {
         startedAt: DateTime.now(),
       );
       _callStateController.add(_currentCall);
+      notifyListeners();
     }
   }
-  
-  // Reject/decline incoming call
+    // Reject/decline incoming call
   Future<void> rejectCall(String callId, {String reason = 'declined'}) async {
     final user = _auth.currentUser;
     if (user == null) return;
+    
+    // Disable wakelock
+    await WakelockPlus.disable();
     
     if (_socket != null && _socket!.connected) {
       _socket!.emit('reject-call', {
@@ -278,12 +317,17 @@ class CallService {
     // Clear current call
     _currentCall = null;
     _callStateController.add(null);
-  }
-  
-  // End active call
+    notifyListeners();
+  }    // End active call
   Future<void> endCall(String callId, {String reason = 'ended'}) async {
     final user = _auth.currentUser;
     if (user == null) return;
+    
+    // End WebRTC call
+    await _webrtcService.endCall();
+    
+    // Disable wakelock when call ends
+    await WakelockPlus.disable();
     
     if (_socket != null && _socket!.connected) {
       _socket!.emit('end-call', {
@@ -309,6 +353,7 @@ class CallService {
       
       _currentCall = null;
       _callStateController.add(null);
+      notifyListeners();
     }
   }
   
@@ -421,46 +466,51 @@ class CallService {
     }
     
     await _firestore.collection('calls').doc(callId).update(updateData);
-  }
-
-  // Create call log
-  Future<void> _createCallLog(String callId, CallLogStatus status) async {
-    final call = _currentCall;
-    if (call == null) return;
-    
-    final user = _auth.currentUser;
-    if (user == null) return;
-
-    // Create call log for each participant
-    for (final participantId in call.participantIds) {
-      final isIncoming = call.callerId != participantId;
-      final otherParticipant = call.participantIds.firstWhere(
-        (id) => id != participantId,
-        orElse: () => call.callerId,
-      );
+  }  // Decline call
+  Future<void> declineCall(String callId) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return;
       
-      final callLog = CallLog(
-        id: '${callId}_$participantId',
-        callId: callId,
-        type: isIncoming ? CallLogType.incoming : CallLogType.outgoing,
-        status: status,
-        isVideo: call.isVideoCall,
-        participantId: otherParticipant,
-        participantName: call.participantNames[otherParticipant] ?? '',
-        participantEmail: call.callerEmail,
-        groupId: call.groupId,
-        groupName: call.groupName,
-        timestamp: call.createdAt,
-        duration: call.duration,
-        userId: participantId,
-      );
+      // Disable wakelock
+      await WakelockPlus.disable();
       
-      await _firestore
-          .collection('call_logs')
-          .doc(callLog.id)
-          .set(callLog.toMap());
+      // Stop ringing
+      _stopRinging();
+      
+      // Emit decline event to server
+      if (_socket != null && _socket!.connected) {
+        _socket!.emit('call-decline', {
+          'roomId': callId,
+          'userId': user.uid,
+        });
+      }
+      
+      // Update current call state
+      if (_currentCall?.id == callId) {
+        _currentCall = _currentCall?.copyWith(
+          state: CallState.declined,
+          endedAt: DateTime.now(),
+          endReason: 'declined',
+        );
+        
+        // Log call
+        if (_currentCall != null) {
+          await _logCall(_currentCall!);
+        }
+        
+        // Clear current call
+        _currentCall = null;
+        _callStateController.add(null);
+        notifyListeners();
+      }
+      
+      print('Call declined: $callId');
+    } catch (e) {
+      print('Error declining call: $e');
     }
   }
+
   // Ringtone management
   void _startRingtone() {
     if (_isRinging) return;
@@ -593,6 +643,85 @@ class CallService {
     _callStateController.add(null);
     _stopRingtone();
   }
+  // Log call to call history
+  Future<void> _logCall(Call call) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return;
+      
+      // Determine the other participant for 1-on-1 calls
+      String participantId = '';
+      String participantName = '';
+      String participantEmail = '';
+        if (!call.isGroupCall && call.participantIds.isNotEmpty) {
+        // For 1-on-1 calls, find the other participant
+        for (int i = 0; i < call.participantIds.length; i++) {
+          if (call.participantIds[i] != user.uid) {
+            participantId = call.participantIds[i];
+            participantName = call.participantNames[call.participantIds[i]] ?? '';
+            participantEmail = participantId; // Fallback
+            break;
+          }
+        }
+      }
+
+      // Determine call log type based on current user's role
+      CallLogType logType = CallLogType.incoming;
+      if (call.callerId == user.uid) {
+        logType = CallLogType.outgoing;
+      }      // Determine status based on call state
+      CallLogStatus logStatus = CallLogStatus.completed;
+      if (call.state == CallState.ended) {
+        switch (call.endReason) {
+          case 'declined':
+            logStatus = CallLogStatus.declined;
+            break;
+          case 'timeout':
+          case 'noAnswer':
+            logStatus = CallLogStatus.missed;
+            break;
+          case 'failed':
+          case 'networkError':
+            logStatus = CallLogStatus.failed;
+            break;
+          default:
+            logStatus = CallLogStatus.completed;
+        }
+      } else if (call.state == CallState.declined) {
+        logStatus = CallLogStatus.declined;
+      } else if (call.state == CallState.missed) {
+        logStatus = CallLogStatus.missed;
+      } else if (call.state == CallState.failed) {
+        logStatus = CallLogStatus.failed;
+      }
+      
+      // Create call log entry
+      final callLog = CallLog(
+        id: '', // Will be set by Firestore
+        callId: call.id,
+        type: logType,
+        status: logStatus,
+        isVideo: call.type == CallType.video,
+        participantId: call.isGroupCall ? '' : participantId,
+        participantName: call.isGroupCall ? '' : participantName,
+        participantEmail: call.isGroupCall ? '' : participantEmail,
+        groupId: call.isGroupCall ? call.groupId : null,
+        groupName: call.isGroupCall ? call.groupName : null,
+        timestamp: call.createdAt,
+        duration: call.duration,
+        userId: user.uid,
+      );
+      
+      // Save to Firestore
+      await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .collection('call_logs')
+          .add(callLog.toMap());
+    } catch (e) {
+      print('Error logging call: $e');
+    }
+  }
 
   // Handle incoming call
   void _handleIncomingCall(Map<String, dynamic> data) {
@@ -617,19 +746,20 @@ class CallService {
       }
       return;
     }
-    
-    // Create incoming call object
+      // Create incoming call object
     final call = Call(
       id: callId,
-      initiatorId: callerId,
-      initiatorName: callerName,
-      recipientId: _auth.currentUser?.uid ?? '',
-      recipientName: '',
-      type: isVideo ? CallType.video : CallType.audio,
-      status: CallStatus.ringing,
+      callerId: callerId,
+      callerName: callerName,
+      callerEmail: '',
+      type: isVideo ? CallType.video : CallType.voice,
+      state: CallState.ringing,
       createdAt: DateTime.now(),
-      isActive: false,
       participantIds: [callerId, ..._auth.currentUser?.uid != null ? [_auth.currentUser!.uid] : [], ...participantIds],
+      participantNames: {
+        callerId: callerName,
+        if (_auth.currentUser?.uid != null) _auth.currentUser!.uid: _auth.currentUser?.displayName ?? '',
+      },
       groupId: isGroup ? callId : null,
       groupName: isGroup ? 'Group Call' : null,
     );
@@ -645,24 +775,36 @@ class CallService {
       'call': call,
       'action': 'incoming',
     });
-  }
-  
-  // Handle call accepted
-  void _handleCallAccepted(Map<String, dynamic> data) {
+  }    // Handle call accepted
+  void _handleCallAccepted(Map<String, dynamic> data) async {
     final callId = data['roomId'] as String;
-    final acceptedBy = data['acceptedBy'] as String;
     
     if (_currentCall?.id == callId) {
       _currentCall = _currentCall!.copyWith(
-        status: CallStatus.active,
-        isActive: true,
-        acceptedAt: DateTime.now(),
+        state: CallState.connected,
+        startedAt: DateTime.now(),
       );
       _callStateController.add(_currentCall);
+      
+      // Join the call room
+      joinCallRoom(callId);
+      
+      // Initialize WebRTC for the call (caller side)
+      if (_socket != null) {
+        await _webrtcService.initialize(
+          socket: _socket!,
+          roomId: callId,
+          isHost: true, // Caller is the host
+          enableVideo: _currentCall!.type == CallType.video,
+          enableAudio: true,
+        );
+      }
       
       // Stop any ringing
       _stopRinging();
       _cancelCallTimeout();
+      
+      notifyListeners();
     }
   }
   
@@ -674,8 +816,8 @@ class CallService {
     
     if (_currentCall?.id == callId) {
       _currentCall = _currentCall!.copyWith(
-        status: CallStatus.rejected,
-        isActive: false,
+        state: CallState.declined,
+        endReason: reason,
       );
       
       // Log the call
@@ -705,8 +847,8 @@ class CallService {
     
     if (_currentCall?.id == callId) {
       _currentCall = _currentCall!.copyWith(
-        status: CallStatus.missed,
-        isActive: false,
+        state: CallState.missed,
+        endReason: reason,
       );
       
       // Log the call
@@ -736,9 +878,9 @@ class CallService {
     
     if (_currentCall?.id == callId) {
       _currentCall = _currentCall!.copyWith(
-        status: CallStatus.ended,
-        isActive: false,
+        state: CallState.ended,
         endedAt: DateTime.now(),
+        endReason: reason,
       );
       
       // Log the call
@@ -816,13 +958,12 @@ class CallService {
     _callTimeoutTimer?.cancel();
     _callTimeoutTimer = null;
   }
-  
   // Enhanced ringing with timeout
   void _startRinging() {
     if (_isRinging) return;
     
     _isRinging = true;
-    FlutterRingtonePlayer.playRingtone();
+    FlutterRingtonePlayer().playRingtone();
     
     // Auto-stop ringing after ring duration
     _ringingTimer = Timer(Duration(seconds: ringDuration), () {
@@ -835,12 +976,12 @@ class CallService {
     if (!_isRinging) return;
     
     _isRinging = false;
-    FlutterRingtonePlayer.stop();
+    FlutterRingtonePlayer().stop();
     _ringingTimer?.cancel();
     _ringingTimer = null;
   }
-  
-  // Dispose socket connection
+    // Dispose socket connection
+  @override
   void dispose() {
     _socket?.disconnect();
     _socket?.dispose();
@@ -849,5 +990,18 @@ class CallService {
     _incomingCallController.close();
     _stopRinging();
     _cancelCallTimeout();
+    super.dispose();
+  }
+
+  // Join call room for WebRTC
+  void joinCallRoom(String callId) {
+    final user = _auth.currentUser;
+    if (user != null && _socket != null && _socket!.connected) {
+      _socket!.emit('join-room', {
+        'roomId': callId,
+        'userId': user.uid,
+        'userName': user.displayName ?? user.email?.split('@')[0] ?? 'Unknown',
+      });
+    }
   }
 }
