@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -39,25 +40,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
   String _searchQuery = '';
   bool _showChatSearch = false;
   String _chatSearchQuery = '';
-
+  Timer? _searchDebounceTimer;
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _updateLastSeen();
     _chatService.startPresenceUpdates();
-    _searchController.addListener(() {
-      setState(() {
-        _searchQuery = _searchController.text;
-      });
-    });
+    // Use debounced listener to avoid rebuilds on every keystroke
+    _searchController.addListener(_onSearchChanged);
   }
 
+  void _onSearchChanged() {
+    // Debounce search to avoid excessive rebuilds
+    if (_searchDebounceTimer?.isActive ?? false) _searchDebounceTimer!.cancel();
+    _searchDebounceTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        setState(() {
+          _searchQuery = _searchController.text;
+        });
+      }
+    });
+  }
   @override
-  void dispose() {    WidgetsBinding.instance.removeObserver(this);
+  void dispose() {    
+    WidgetsBinding.instance.removeObserver(this);
     _chatService.stopPresenceUpdates();
     _searchController.dispose();
     _chatSearchController.dispose();
+    _searchDebounceTimer?.cancel();
     super.dispose();
   }
 
@@ -82,14 +93,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
         break;
     }
   }
-
   @override
   Widget build(BuildContext context) {
-    final authService = Provider.of<AuthService>(context);
-    final currentUser = authService.user;
-    final isLargeScreen = MediaQuery.of(context).size.width > 768;    return Scaffold(
-      backgroundColor: const Color(0xFFF7F6F3),
-      body: SafeArea(
+    final isLargeScreen = MediaQuery.of(context).size.width > 768;
+    
+    return Consumer<AuthService>(
+      builder: (context, authService, child) {
+        final currentUser = authService.user;
+        
+        return Scaffold(
+          backgroundColor: const Color(0xFFF7F6F3),
+          body: SafeArea(
         child: Stack(
           children: [
             // Main chat area
@@ -474,11 +488,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                       child: _buildSidebar(currentUser, isLargeScreen),
                     ),                  ),
                 ),
-              ),
-            ),
+              ),            ),
         ],
         ),
       ),
+    );
+      },
     );
   }
 
@@ -767,9 +782,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                         builder: (context) => CreateGroupDialog(
                           allUsers: users,
                         ),
-                      );
-                      if (result != null) {
-                        setState(() {});
+                      );                      if (result != null) {
+                        // Group was created, refresh the groups list
+                        // The streams will handle the UI update automatically
                       }
                     } catch (e) {
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -843,59 +858,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
         // Users list
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: StreamBuilder<List<ChatUser>>(
-              stream: _searchQuery.isEmpty 
-                  ? _chatService.getUsers()
-                  : _chatService.searchUsers(_searchQuery),
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Text(
-                      'Error loading users: ${snapshot.error}',
-                      style: const TextStyle(color: Colors.red),
-                    ),
-                  );
-                }
-                
-                if (!snapshot.hasData) {
-                  return const Center(
-                    child: SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  );
-                }
-                
-                final users = snapshot.data!
-                    .where((user) => user.id != currentUser?.uid)
-                    .toList();
-                    
-                if (users.isEmpty) {
-                  return Center(
-                    child: Text(
-                      _searchQuery.isEmpty 
-                          ? 'No other users yet'
-                          : 'No users found for "$_searchQuery"',
-                      style: const TextStyle(
-                        color: Color(0xFF9B9A97),
-                        fontSize: 14,
-                      ),
-                    ),
-                  );
-                }
-                
-                return ListView.separated(
-                  itemCount: users.length,
-                  separatorBuilder: (context, index) => const SizedBox(height: 4),
-                  itemBuilder: (context, index) {
-                    final user = users[index];
-                    return _buildUserItem(user, isLargeScreen);
+            padding: const EdgeInsets.symmetric(horizontal: 16),                child: _UsersList(
+                  chatService: _chatService,
+                  searchQuery: _searchQuery,
+                  currentUser: currentUser,
+                  isLargeScreen: isLargeScreen,
+                  onUserSelected: (user) {
+                    setState(() {
+                      _selectedUser = user;
+                      _selectedGroupId = null;
+                      _selectedGroup = null;
+                      if (!isLargeScreen) {
+                        _showUsersList = false;
+                      }
+                    });
                   },
-                );
-              },
-            ),
+                ),
           ),
         ),
         
@@ -943,130 +921,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
       ),
     );
   }
-
-  Widget _buildUserItem(ChatUser user, bool isLargeScreen) {
-    final isSelected = _selectedUser?.id == user.id;
-    
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () {
-          setState(() {
-            _selectedUser = user;
-            _selectedGroupId = null;
-            _selectedGroup = null;
-            if (!isLargeScreen) {
-              _showUsersList = false;
-            }
-          });
-        },
-        onLongPress: () {
-          _showUserProfileMenu(user);
-        },
-        borderRadius: BorderRadius.circular(6),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFF37352F).withOpacity(0.06) : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Row(
-            children: [
-              Stack(
-                children: [
-                  GestureDetector(
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => NewProfileScreen(
-                            user: user,
-                            isEditable: false,
-                            onMessageTap: () {
-                              Navigator.of(context).pop();
-                              setState(() {
-                                _selectedUser = user;
-                                _showUsersList = false;
-                              });
-                            },
-                          ),
-                        ),
-                      );
-                    },
-                    child: Container(
-                      width: 24,
-                      height: 24,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: _getGradientColors(user.displayName.isNotEmpty ? user.displayName : user.email),
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Center(
-                        child: Text(
-                          user.displayName.isNotEmpty 
-                              ? user.displayName[0].toUpperCase()
-                              : user.email[0].toUpperCase(),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (user.isOnline)
-                    Positioned(
-                      bottom: 0,
-                      right: 0,
-                      child: Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF10B981),
-                          shape: BoxShape.circle,
-                          border: Border.fromBorderSide(
-                            BorderSide(color: Color(0xFFF7F6F3), width: 1.5),
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [                    BadgedUserName(
-                      senderName: user.displayName,
-                      senderEmail: user.email,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: isSelected ? FontWeight.w500 : FontWeight.w400,
-                        color: isSelected ? const Color(0xFF2F3437) : const Color(0xFF6B6B6B),
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      _chatService.formatLastSeen(user.lastSeen, user.isOnline),
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: Color(0xFF9B9A97),
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildGroupItem(Map<String, dynamic> group, bool isLargeScreen) {
     final isSelected = _selectedGroupId == group['id'];
     final groupName = group['name'] ?? 'Unnamed Group';
@@ -1136,153 +990,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
           ),
         ),
       ),
-    );
-  }
-
-  void _showUserProfileMenu(ChatUser user) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (BuildContext context) {
-        return Container(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE1E1E0),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: _getGradientColors(user.displayName.isNotEmpty ? user.displayName : user.email),
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Center(
-                      child: Text(
-                        user.displayName.isNotEmpty 
-                            ? user.displayName[0].toUpperCase()
-                            : user.email[0].toUpperCase(),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [                        BadgedUserName(
-                          senderName: user.displayName,
-                          senderEmail: user.email,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF2F3437),
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _chatService.formatLastSeen(user.lastSeen, user.isOnline),
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: Color(0xFF9B9A97),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) => NewProfileScreen(
-                              user: user,
-                              isEditable: false,
-                              onMessageTap: () {
-                                Navigator.of(context).pop();
-                                setState(() {
-                                  _selectedUser = user;
-                                  _showUsersList = false;
-                                });
-                              },
-                            ),
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.person),
-                      label: const Text('View Profile'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFF7F6F3),
-                        foregroundColor: const Color(0xFF2F3437),
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          side: const BorderSide(color: Color(0xFFE1E1E0)),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        setState(() {
-                          _selectedUser = user;
-                          _selectedGroupId = null;
-                          _selectedGroup = null;
-                          _showUsersList = false;
-                        });
-                      },
-                      icon: const Icon(Icons.message),
-                      label: const Text('Message'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.black,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
+    );  }
 
   void _showProfileMenuForMobile(BuildContext context) {
     showModalBottomSheet(
@@ -1515,6 +1223,10 @@ class _ChatMessagesViewState extends State<ChatMessagesView> {
   final ImagePicker _imagePicker = ImagePicker();
   bool _isLoading = false;
   bool _hasText = false;
+  
+  // Cache streams to avoid recreation on every build
+  Stream<List<ChatItem>>? _currentStream;
+  String? _lastStreamKey;
 
   @override
   void initState() {
@@ -1527,6 +1239,32 @@ class _ChatMessagesViewState extends State<ChatMessagesView> {
         });
       }
     });
+  }
+
+  Stream<List<ChatItem>> _getOrCreateStream() {
+    final isSearching = widget.searchQuery != null && widget.searchQuery!.trim().isNotEmpty;
+    final streamKey = '${widget.selectedUser?.id}_${widget.selectedGroupId}_$isSearching';
+    
+    // Return cached stream if key hasn't changed
+    if (_lastStreamKey == streamKey && _currentStream != null) {
+      return _currentStream!;
+    }
+    
+    _lastStreamKey = streamKey;
+    
+    if (isSearching) {
+      _currentStream = widget.chatService.getMessagesStream(
+        recipientId: widget.selectedUser?.id,
+        groupId: widget.selectedGroupId,
+      ).map((messages) => messages.map((m) => MessageChatItem(m)).toList());
+    } else {
+      _currentStream = widget.chatService.getChatItemsStream(
+        recipientId: widget.selectedUser?.id,
+        groupId: widget.selectedGroupId,
+      );
+    }
+    
+    return _currentStream!;
   }
 
   @override
@@ -1650,17 +1388,15 @@ class _ChatMessagesViewState extends State<ChatMessagesView> {
       }
     }
   }
-
   void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+    // Use a more efficient approach with debouncing
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    }
   }
 
   Future<void> _loadMoreMessages() async {
@@ -1692,17 +1428,9 @@ class _ChatMessagesViewState extends State<ChatMessagesView> {
       children: [
         // Messages list
         Expanded(
-          child: Container(
-            color: Colors.white,            child: StreamBuilder<List<ChatItem>>(
-              stream: widget.searchQuery != null && widget.searchQuery!.trim().isNotEmpty
-                  ? widget.chatService.getMessagesStream(
-                      recipientId: widget.selectedUser?.id,
-                      groupId: widget.selectedGroupId,
-                    ).map((messages) => messages.map((m) => MessageChatItem(m)).toList())
-                  : widget.chatService.getChatItemsStream(
-                      recipientId: widget.selectedUser?.id,
-                      groupId: widget.selectedGroupId,
-                    ),
+          child: Container(            color: Colors.white,            
+            child: StreamBuilder<List<ChatItem>>(
+              stream: _getOrCreateStream(),
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
                   return Center(
@@ -2187,6 +1915,203 @@ class NotionMessageBubble extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  List<Color> _getGradientColors(String text) {
+    final hash = text.hashCode.abs();
+    final colorPairs = [
+      [const Color(0xFF667eea), const Color(0xFF764ba2)],
+      [const Color(0xFFf093fb), const Color(0xFFf5576c)],
+      [const Color(0xFF4facfe), const Color(0xFF00f2fe)],
+      [const Color(0xFF43e97b), const Color(0xFF38f9d7)],
+      [const Color(0xFFfa709a), const Color(0xFFfee140)],
+      [const Color(0xFFa8edea), const Color(0xFFfed6e3)],
+      [const Color(0xFFffecd2), const Color(0xFFfcb69f)],
+      [const Color(0xFFa8caba), const Color(0xFF5d4e75)],
+    ];
+    return colorPairs[hash % colorPairs.length];
+  }
+}
+
+// Separate widget for users list to prevent unnecessary rebuilds
+class _UsersList extends StatelessWidget {
+  final ChatService chatService;
+  final String searchQuery;
+  final User? currentUser;
+  final bool isLargeScreen;
+  final Function(ChatUser) onUserSelected;
+
+  const _UsersList({
+    required this.chatService,
+    required this.searchQuery,
+    required this.currentUser,
+    required this.isLargeScreen,
+    required this.onUserSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<ChatUser>>(
+      stream: searchQuery.isEmpty 
+          ? chatService.getUsers()
+          : chatService.searchUsers(searchQuery),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(
+              'Error loading users: ${snapshot.error}',
+              style: const TextStyle(color: Colors.red),
+            ),
+          );
+        }
+        
+        if (!snapshot.hasData) {
+          return const Center(
+            child: SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          );
+        }
+        
+        final users = snapshot.data!
+            .where((user) => user.id != currentUser?.uid)
+            .toList();
+            
+        if (users.isEmpty) {
+          return Center(
+            child: Text(
+              searchQuery.isEmpty 
+                  ? 'No other users yet'
+                  : 'No users found for "$searchQuery"',
+              style: const TextStyle(
+                color: Color(0xFF9B9A97),
+                fontSize: 14,
+              ),
+            ),
+          );
+        }
+        
+        return ListView.separated(
+          itemCount: users.length,
+          separatorBuilder: (context, index) => const SizedBox(height: 4),
+          itemBuilder: (context, index) {
+            final user = users[index];
+            return _UserListItem(
+              user: user,
+              isLargeScreen: isLargeScreen,
+              onTap: () => onUserSelected(user),
+              chatService: chatService,
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+// Separate widget for user list items
+class _UserListItem extends StatelessWidget {
+  final ChatUser user;
+  final bool isLargeScreen;
+  final VoidCallback onTap;
+  final ChatService chatService;
+
+  const _UserListItem({
+    required this.user,
+    required this.isLargeScreen,
+    required this.onTap,
+    required this.chatService,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            children: [
+              Stack(
+                children: [
+                  Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: _getGradientColors(user.displayName.isNotEmpty ? user.displayName : user.email),
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Center(
+                      child: Text(
+                        user.displayName.isNotEmpty 
+                            ? user.displayName[0].toUpperCase()
+                            : user.email[0].toUpperCase(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (user.isOnline)
+                    Positioned(
+                      bottom: 0,
+                      right: 0,
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF10B981),
+                          shape: BoxShape.circle,
+                          border: Border.fromBorderSide(
+                            BorderSide(color: Color(0xFFF7F6F3), width: 1.5),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      user.displayName.isNotEmpty 
+                          ? user.displayName 
+                          : user.email.split('@')[0],
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
+                        color: Color(0xFF6B6B6B),
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      chatService.formatLastSeen(user.lastSeen, user.isOnline),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF9B9A97),
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

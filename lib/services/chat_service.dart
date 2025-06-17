@@ -1056,7 +1056,6 @@ class ChatService {
     ids.sort();
     return ids.join('_');
   }
-
   // Get combined chat items stream (messages + call logs)
   Stream<List<ChatItem>> getChatItemsStream({String? recipientId, String? groupId}) {
     final cacheKey = _getCacheKey(recipientId: recipientId, groupId: groupId);
@@ -1073,54 +1072,43 @@ class ChatService {
     // Combine messages and call logs streams
     final messagesStream = getMessagesStream(recipientId: recipientId, groupId: groupId);
     final callLogsStream = _callService.getCallLogsStream(recipientId: recipientId, groupId: groupId);
-      // Combine both streams
+    
+    // Keep track of latest data from both streams
+    List<Message> latestMessages = [];
+    List<CallLog> latestCallLogs = [];
+    
+    void emitCombinedItems() {
+      final combinedItems = <ChatItem>[];
+      
+      // Add messages as chat items
+      for (final message in latestMessages) {
+        combinedItems.add(MessageChatItem(message));
+      }
+      
+      // Add call logs as chat items
+      for (final callLog in latestCallLogs) {
+        combinedItems.add(CallLogChatItem(callLog));
+      }
+      
+      // Sort by timestamp (oldest first)
+      combinedItems.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      
+      // Emit combined items
+      if (_chatItemControllers.containsKey(cacheKey)) {
+        _chatItemControllers[cacheKey]!.add(combinedItems);
+      }
+    }
+    
+    // Listen to messages stream
     messagesStream.listen((messages) {
-      callLogsStream.first.then((callLogs) {
-        final combinedItems = <ChatItem>[];
-        
-        // Add messages as chat items
-        for (final message in messages) {
-          combinedItems.add(MessageChatItem(message));
-        }
-        
-        // Add call logs as chat items
-        for (final callLog in callLogs) {
-          combinedItems.add(CallLogChatItem(callLog));
-        }
-        
-        // Sort by timestamp (oldest first)
-        combinedItems.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-        
-        // Emit combined items
-        if (_chatItemControllers.containsKey(cacheKey)) {
-          _chatItemControllers[cacheKey]!.add(combinedItems);
-        }
-      });
+      latestMessages = messages;
+      emitCombinedItems();
     });
     
-    // Also listen to call logs changes
+    // Listen to call logs stream
     callLogsStream.listen((callLogs) {
-      messagesStream.first.then((messages) {
-        final combinedItems = <ChatItem>[];
-        
-        // Add messages as chat items
-        for (final message in messages) {
-          combinedItems.add(MessageChatItem(message));
-        }
-        
-        // Add call logs as chat items
-        for (final callLog in callLogs) {
-          combinedItems.add(CallLogChatItem(callLog));
-        }
-        
-        // Sort by timestamp (oldest first)
-        combinedItems.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-        
-        // Emit combined items
-        if (_chatItemControllers.containsKey(cacheKey)) {
-          _chatItemControllers[cacheKey]!.add(combinedItems);
-        }
-      });
+      latestCallLogs = callLogs;
+      emitCombinedItems();
     });
     
     return _chatItemControllers[cacheKey]!.stream;

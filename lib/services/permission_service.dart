@@ -1,7 +1,18 @@
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/material.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 
 class PermissionService {
+  static Future<int> _getAndroidVersion() async {
+    try {
+      final deviceInfo = DeviceInfoPlugin();
+      final androidInfo = await deviceInfo.androidInfo;
+      return androidInfo.version.sdkInt;
+    } catch (e) {
+      return 33; // Default to Android 13 if detection fails
+    }
+  }
+
   static Future<bool> requestCameraPermission() async {
     final status = await Permission.camera.request();
     return status.isGranted;
@@ -13,13 +24,49 @@ class PermissionService {
   }
 
   static Future<bool> requestStoragePermission() async {
-    final status = await Permission.storage.request();
-    return status.isGranted;
+    final androidVersion = await _getAndroidVersion();
+    
+    if (androidVersion >= 33) {
+      // Android 13+ - Use granular media permissions
+      final results = await [
+        Permission.photos,
+        Permission.videos,
+      ].request();
+      
+      return results[Permission.photos]?.isGranted == true ||
+             results[Permission.videos]?.isGranted == true;
+    } else {
+      // Android 12 and below - Use legacy storage permission
+      final status = await Permission.storage.request();
+      return status.isGranted;
+    }
   }
 
   static Future<bool> requestPhotosPermission() async {
-    final status = await Permission.photos.request();
-    return status.isGranted;
+    final androidVersion = await _getAndroidVersion();
+    
+    if (androidVersion >= 33) {
+      // Android 13+ - Request READ_MEDIA_IMAGES
+      final status = await Permission.photos.request();
+      return status.isGranted;
+    } else {
+      // Android 12 and below - Request storage permission
+      final status = await Permission.storage.request();
+      return status.isGranted;
+    }
+  }
+
+  static Future<bool> requestNotificationPermission() async {
+    final androidVersion = await _getAndroidVersion();
+    
+    if (androidVersion >= 33) {
+      // Android 13+ - POST_NOTIFICATIONS is a runtime permission
+      final status = await Permission.notification.request();
+      return status.isGranted;
+    } else {
+      // Android 12 and below - notifications are granted at install time
+      return true;
+    }
   }
 
   static Future<bool> requestCallPermissions() async {
@@ -28,20 +75,24 @@ class PermissionService {
       Permission.microphone,
     ].request();
 
-    return results[Permission.camera]?.isGranted == true &&
-           results[Permission.microphone]?.isGranted == true;
+    final hasBasicPermissions = results[Permission.camera]?.isGranted == true &&
+                               results[Permission.microphone]?.isGranted == true;
+    
+    // Also request notification permission for incoming call alerts
+    await requestNotificationPermission();
+    
+    return hasBasicPermissions;
   }
 
   static Future<bool> requestMediaPermissions() async {
     final results = await [
       Permission.camera,
-      Permission.storage,
-      Permission.photos,
     ].request();
-
-    return results[Permission.camera]?.isGranted == true &&
-           (results[Permission.storage]?.isGranted == true ||
-            results[Permission.photos]?.isGranted == true);
+    
+    final hasCamera = results[Permission.camera]?.isGranted == true;
+    final hasStorage = await requestStoragePermission();
+    
+    return hasCamera && hasStorage;
   }
 
   static Future<bool> hasCallPermissions() async {
@@ -53,11 +104,33 @@ class PermissionService {
 
   static Future<bool> hasMediaPermissions() async {
     final cameraStatus = await Permission.camera.status;
-    final storageStatus = await Permission.storage.status;
-    final photosStatus = await Permission.photos.status;
+    final androidVersion = await _getAndroidVersion();
     
-    return cameraStatus.isGranted && 
-           (storageStatus.isGranted || photosStatus.isGranted);
+    bool hasStorageAccess;
+    if (androidVersion >= 33) {
+      // Android 13+ - Check granular permissions
+      final photosStatus = await Permission.photos.status;
+      final videosStatus = await Permission.videos.status;
+      hasStorageAccess = photosStatus.isGranted || videosStatus.isGranted;
+    } else {
+      // Android 12 and below - Check legacy storage permission
+      final storageStatus = await Permission.storage.status;
+      hasStorageAccess = storageStatus.isGranted;
+    }
+    
+    return cameraStatus.isGranted && hasStorageAccess;
+  }
+
+  static Future<bool> hasNotificationPermission() async {
+    final androidVersion = await _getAndroidVersion();
+    
+    if (androidVersion >= 33) {
+      final status = await Permission.notification.status;
+      return status.isGranted;
+    } else {
+      // Pre-Android 13 - notifications are granted at install time
+      return true;
+    }
   }
 
   static void showPermissionDialog(BuildContext context, String permission) {

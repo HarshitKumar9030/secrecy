@@ -123,8 +123,9 @@ class SecrecyApp extends StatelessWidget {
             bodyMedium: TextStyle(
               color: Color(0xFF2F3437),            ),
           ),
-        ),
-        home: call != null && call.state == CallState.ringing
+        ),        home: call != null && (call.state == CallState.ringing || 
+                                 call.state == CallState.connecting || 
+                                 call.state == CallState.connected)
             ? CallScreen(call: call)
             : const AuthWrapper(),
         debugShowCheckedModeBanner: false,
