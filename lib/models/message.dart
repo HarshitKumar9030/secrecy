@@ -111,8 +111,8 @@ class Message {
     } else {
       return DateTime.now();
     }
-  }
-  Message copyWith({
+  }  Message copyWith({
+    String? id,
     String? content,
     bool? isEdited,
     DateTime? editedAt,
@@ -120,7 +120,7 @@ class Message {
     MessageStatus? status,
   }) {
     return Message(
-      id: id,
+      id: id ?? this.id,
       content: content ?? this.content,
       type: type,
       imageUrl: imageUrl,

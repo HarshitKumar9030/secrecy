@@ -41,9 +41,8 @@ class SecrecyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
-      create: (context) => AuthService(),
-      child: MaterialApp(
-        title: 'Secrecy Chat',
+      create: (context) => AuthService(),      child: MaterialApp(
+        title: 'Secrecy',
         theme: ThemeData(
           fontFamily: 'SF Pro Display',
           primaryColor: const Color(0xFF2F3437),

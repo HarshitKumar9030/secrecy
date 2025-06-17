@@ -5,7 +5,6 @@ import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:video_player/video_player.dart';
 import '../services/auth_service.dart';
 import '../services/chat_service.dart';
 import '../models/message.dart';
@@ -21,14 +20,16 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
-  final ChatService _chatService = ChatService();
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  final ChatService _chatService = ChatService();
   final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _chatSearchController = TextEditingController();
   ChatUser? _selectedUser;
   String? _selectedGroupId;
   Map<String, dynamic>? _selectedGroup;
   bool _showUsersList = false;
   String _searchQuery = '';
+  bool _showChatSearch = false;
+  String _chatSearchQuery = '';
 
   @override
   void initState() {
@@ -44,10 +45,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
+  void dispose() {    WidgetsBinding.instance.removeObserver(this);
     _chatService.stopPresenceUpdates();
     _searchController.dispose();
+    _chatSearchController.dispose();
     super.dispose();
   }
 
@@ -232,11 +233,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         ),
                       ),
                     ],
-                    
-                    // Profile and Logout buttons
+                      // Profile and Search buttons
                     const Spacer(),
                     Row(
                       children: [
+                        // Search button
+                        IconButton(
+                          onPressed: () {
+                            setState(() {
+                              _showChatSearch = !_showChatSearch;
+                              if (!_showChatSearch) {
+                                _chatSearchController.clear();
+                                _chatSearchQuery = '';
+                              }
+                            });
+                          },
+                          icon: Icon(
+                            _showChatSearch ? Icons.close : Icons.search,
+                            color: const Color(0xFF9B9A97),
+                          ),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
                         if (_selectedUser != null)
                           IconButton(
                             onPressed: () {
@@ -261,9 +279,58 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           ),
                       ],
                     ),
-                  ],
-                ),
+                  ],                ),
               ),
+              
+              // Search bar (when active)
+              if (_showChatSearch)
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    border: Border(
+                      bottom: BorderSide(color: Color(0xFFE1E1E0), width: 1),
+                    ),
+                  ),
+                  child: TextField(
+                    controller: _chatSearchController,
+                    onChanged: (value) {
+                      setState(() {
+                        _chatSearchQuery = value;
+                      });
+                    },
+                    decoration: InputDecoration(
+                      hintText: 'Search messages...',
+                      prefixIcon: const Icon(Icons.search, color: Color(0xFF9B9A97)),
+                      suffixIcon: _chatSearchController.text.isNotEmpty
+                          ? IconButton(
+                              onPressed: () {
+                                _chatSearchController.clear();
+                                setState(() {
+                                  _chatSearchQuery = '';
+                                });
+                              },
+                              icon: const Icon(Icons.clear, color: Color(0xFF9B9A97)),
+                            )
+                          : null,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Color(0xFFE1E1E0)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Color(0xFFE1E1E0)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: const BorderSide(color: Color(0xFF2F3437), width: 2),
+                      ),
+                      filled: true,
+                      fillColor: const Color(0xFFF7F6F3),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    ),
+                  ),
+                ),
               
               // Messages
               Expanded(
@@ -272,6 +339,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   selectedUser: _selectedUser,
                   selectedGroupId: _selectedGroupId,
                   selectedGroup: _selectedGroup,
+                  searchQuery: _chatSearchQuery,
                 ),
               ),
             ],
@@ -366,31 +434,47 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      currentUser?.displayName?.isNotEmpty == true
-                          ? currentUser!.displayName!
-                          : 'You',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 16,
-                        color: Color(0xFF2F3437),
+              const SizedBox(width: 12),              Expanded(
+                child: GestureDetector(
+                  onTap: !isLargeScreen ? () {
+                    _showProfileMenuForMobile(context);
+                  } : null,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              currentUser?.displayName?.isNotEmpty == true
+                                  ? currentUser!.displayName!
+                                  : 'You',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 16,
+                                color: Color(0xFF2F3437),
+                              ),
+                            ),
+                          ),
+                          if (!isLargeScreen)
+                            const Icon(
+                              Icons.keyboard_arrow_down,
+                              color: Color(0xFF9B9A97),
+                              size: 20,
+                            ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      currentUser?.email ?? '',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Color(0xFF9B9A97),
+                      const SizedBox(height: 2),
+                      Text(
+                        currentUser?.email ?? '',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF9B9A97),
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
               if (!isLargeScreen)
@@ -889,8 +973,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ],
           ),
         ),
-      ),
-    );
+      );
   }
 
   Widget _buildGroupItem(Map<String, dynamic> group, bool isLargeScreen) {
@@ -961,8 +1044,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ],
           ),
         ),
-      ),
-    );
+      );
   }
 
   void _showUserProfileMenu(ChatUser user) {
@@ -1112,6 +1194,56 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  void _showProfileMenuForMobile(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext context) {
+        return Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE1E1E0),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+              ListTile(
+                leading: const Icon(Icons.person_outline, color: Color(0xFF2F3437)),
+                title: const Text('Profile'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => const NewProfileScreen(isEditable: true),
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.logout, color: Color(0xFF2F3437)),
+                title: const Text('Logout'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await Provider.of<AuthService>(context, listen: false).signOut();
+                },
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   List<Color> _getGradientColors(String text) {
     final hash = text.hashCode.abs();
     final colorPairs = [
@@ -1140,6 +1272,7 @@ class ChatMessagesView extends StatefulWidget {
   final ChatUser? selectedUser;
   final String? selectedGroupId;
   final Map<String, dynamic>? selectedGroup;
+  final String? searchQuery;
 
   const ChatMessagesView({
     super.key,
@@ -1147,6 +1280,7 @@ class ChatMessagesView extends StatefulWidget {
     this.selectedUser,
     this.selectedGroupId,
     this.selectedGroup,
+    this.searchQuery,
   });
 
   @override
@@ -1321,12 +1455,17 @@ class _ChatMessagesViewState extends State<ChatMessagesView> {
         // Messages list
         Expanded(
           child: Container(
-            color: Colors.white,
-            child: StreamBuilder<List<Message>>(
-              stream: widget.chatService.getMessagesStream(
-                recipientId: widget.selectedUser?.id,
-                groupId: widget.selectedGroupId,
-              ),
+            color: Colors.white,            child: StreamBuilder<List<Message>>(
+              stream: widget.searchQuery != null && widget.searchQuery!.trim().isNotEmpty
+                  ? widget.chatService.searchMessagesInChat(
+                      widget.searchQuery!,
+                      recipientId: widget.selectedUser?.id,
+                      groupId: widget.selectedGroupId,
+                    )
+                  : widget.chatService.getMessagesStream(
+                      recipientId: widget.selectedUser?.id,
+                      groupId: widget.selectedGroupId,
+                    ),
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
                   return Center(

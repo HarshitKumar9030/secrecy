@@ -26,6 +26,20 @@ class ChatService {
   static const int _initialLoadCount = 50;
   
   Timer? _presenceTimer;
+  bool _migrationRun = false;
+
+  // Constructor
+  ChatService() {
+    // Run migration once when service is created
+    _runMigrationOnce();
+  }
+
+  Future<void> _runMigrationOnce() async {
+    if (!_migrationRun) {
+      _migrationRun = true;
+      await migrateGeneralMessages();
+    }
+  }
 
   // Send message with optimistic updates
   Future<String> sendMessageOptimistic(String content, {String? recipientId, String? groupId}) async {
@@ -57,21 +71,23 @@ class ChatService {
       final messageData = message.toMap();
       messageData.remove('isOptimistic');
       
-      DocumentReference docRef;
-      if (recipientId == null && groupId == null) {
-        // General chat
-        docRef = await _firestore.collection('general_messages').add(messageData);
-      } else if (groupId != null) {
-        // Group chat
-        docRef = await _firestore.collection('messages').add(messageData);      } else {
-        // Private chat
-        final chatRoomId = _getChatRoomId(user.uid, recipientId!);
-        docRef = await _firestore
-            .collection('private_chats')
-            .doc(chatRoomId)
-            .collection('messages')
-            .add(messageData);
+      // Add chatType and chatRoomId for consistent querying
+      if (groupId != null) {
+        messageData['chatType'] = 'group';
+        messageData['chatRoomId'] = null;
+      } else if (recipientId == null) {
+        messageData['chatType'] = 'general';
+        messageData['chatRoomId'] = null;
+        messageData['recipientId'] = null;
+        messageData['groupId'] = null;
+      } else {
+        messageData['chatType'] = 'private';
+        messageData['chatRoomId'] = _getChatRoomId(user.uid, recipientId);
+        messageData['groupId'] = null;
       }
+      
+      // Always use the main messages collection
+      final docRef = await _firestore.collection('messages').add(messageData);
 
       // Update cache with real ID
       _updateOptimisticMessage(cacheKey, tempId, docRef.id);
@@ -102,7 +118,9 @@ class ChatService {
       );
       
       final snapshot = await uploadTask.whenComplete(() {});
-      final imageUrl = await snapshot.ref.getDownloadURL();      final message = Message(
+      final imageUrl = await snapshot.ref.getDownloadURL();
+
+      final message = Message(
         id: '',
         content: caption ?? '',
         type: MessageType.image,
@@ -112,25 +130,28 @@ class ChatService {
         senderName: user.displayName ?? user.email?.split('@')[0] ?? 'Anonymous',
         senderPhotoUrl: user.photoURL,
         recipientId: recipientId,
-        groupId: groupId,
-        timestamp: DateTime.now(),
+        groupId: groupId,        timestamp: DateTime.now(),
       );
 
-      if (recipientId == null && groupId == null) {
-        // General chat
-        await _firestore.collection('general_messages').add(message.toMap());
-      } else if (groupId != null) {
-        // Group chat
-        await _firestore.collection('messages').add(message.toMap());
+      final messageData = message.toMap();
+      
+      // Add chatType and chatRoomId for consistent querying
+      if (groupId != null) {
+        messageData['chatType'] = 'group';
+        messageData['chatRoomId'] = null;
+      } else if (recipientId == null) {
+        messageData['chatType'] = 'general';
+        messageData['chatRoomId'] = null;
+        messageData['recipientId'] = null;
+        messageData['groupId'] = null;
       } else {
-        // Private chat
-        final chatRoomId = _getChatRoomId(user.uid, recipientId!);
-        await _firestore
-            .collection('private_chats')
-            .doc(chatRoomId)
-            .collection('messages')
-            .add(message.toMap());
+        messageData['chatType'] = 'private';
+        messageData['chatRoomId'] = _getChatRoomId(user.uid, recipientId);
+        messageData['groupId'] = null;
       }
+
+      // Always use the main messages collection
+      await _firestore.collection('messages').add(messageData);
     } catch (e) {
       print('Error in sendImage: $e');
       throw Exception('Failed to upload image: $e');
@@ -148,7 +169,9 @@ class ChatService {
       
       final uploadTask = ref.putFile(videoFile);
       final snapshot = await uploadTask;
-      final videoUrl = await snapshot.ref.getDownloadURL();      final message = Message(
+      final videoUrl = await snapshot.ref.getDownloadURL();
+
+      final message = Message(
         id: '',
         content: caption ?? '',
         type: MessageType.video,
@@ -158,48 +181,53 @@ class ChatService {
         senderName: user.displayName ?? user.email?.split('@')[0] ?? 'Anonymous',
         senderPhotoUrl: user.photoURL,
         recipientId: recipientId,
-        groupId: groupId,
-        timestamp: DateTime.now(),
+        groupId: groupId,        timestamp: DateTime.now(),
       );
 
-      if (recipientId == null && groupId == null) {
-        // General chat
-        await _firestore.collection('general_messages').add(message.toMap());
-      } else if (groupId != null) {
-        // Group chat
-        await _firestore.collection('messages').add(message.toMap());
+      final messageData = message.toMap();
+      
+      // Add chatType and chatRoomId for consistent querying
+      if (groupId != null) {
+        messageData['chatType'] = 'group';
+        messageData['chatRoomId'] = null;
+      } else if (recipientId == null) {
+        messageData['chatType'] = 'general';
+        messageData['chatRoomId'] = null;
+        messageData['recipientId'] = null;
+        messageData['groupId'] = null;
       } else {
-        // Private chat
-        final chatRoomId = _getChatRoomId(user.uid, recipientId!);
-        await _firestore
-            .collection('private_chats')
-            .doc(chatRoomId)
-            .collection('messages')
-            .add(message.toMap());
+        messageData['chatType'] = 'private';
+        messageData['chatRoomId'] = _getChatRoomId(user.uid, recipientId);
+        messageData['groupId'] = null;
       }
+
+      // Always use the main messages collection
+      await _firestore.collection('messages').add(messageData);
     } catch (e) {
       print('Error in sendVideo: $e');
       throw Exception('Failed to upload video: $e');
     }
   }
-
   // Get messages stream (main method)
   Stream<List<Message>> getMessagesStream({String? recipientId, String? groupId}) {
     final cacheKey = _getCacheKey(recipientId: recipientId, groupId: groupId);
     
-    // Create controller if doesn't exist
-    if (!_messageControllers.containsKey(cacheKey)) {
-      _messageControllers[cacheKey] = StreamController<List<Message>>.broadcast();
-      _messageCache[cacheKey] = [];
-      _hasMoreMessages[cacheKey] = true;
-      _isLoadingMore[cacheKey] = false;
-      
-      // Immediately emit empty list to prevent hanging
-      _messageControllers[cacheKey]!.add([]);
-      
-      // Load initial messages asynchronously
-      _loadInitialMessages(cacheKey, recipientId: recipientId, groupId: groupId);
+    // Always clear existing cache to ensure fresh data when switching chats
+    if (_messageControllers.containsKey(cacheKey)) {
+      clearChatCache(recipientId: recipientId, groupId: groupId);
     }
+    
+    // Create fresh controller
+    _messageControllers[cacheKey] = StreamController<List<Message>>.broadcast();
+    _messageCache[cacheKey] = [];
+    _hasMoreMessages[cacheKey] = true;
+    _isLoadingMore[cacheKey] = false;
+    
+    // Immediately emit empty list to prevent hanging
+    _messageControllers[cacheKey]!.add([]);
+    
+    // Load initial messages asynchronously
+    _loadInitialMessages(cacheKey, recipientId: recipientId, groupId: groupId);
     
     return _messageControllers[cacheKey]!.stream;
   }
@@ -211,39 +239,57 @@ class ChatService {
 
   // Send message (compatibility method)
   Future<void> sendMessage(String content, {String? recipientId, String? groupId}) async {
-    await sendMessageOptimistic(content, recipientId: recipientId, groupId: groupId);
-  }
+    await sendMessageOptimistic(content, recipientId: recipientId, groupId: groupId);  }
   // Load initial messages
   Future<void> _loadInitialMessages(String cacheKey, {String? recipientId, String? groupId}) async {
+    print('🔄 Loading initial messages for cacheKey: $cacheKey');
+    print('   recipientId: $recipientId, groupId: $groupId');
+    
     try {
-      print('Loading initial messages for cacheKey: $cacheKey, recipientId: $recipientId, groupId: $groupId');
-      Query query = _buildMessageQuery(recipientId: recipientId, groupId: groupId);
-      query = query.orderBy('timestamp', descending: true).limit(_initialLoadCount);
-      
-      final snapshot = await query.get();
-      print('Loaded ${snapshot.docs.length} messages for $cacheKey');
-      
-      final messages = snapshot.docs.map((doc) {
-        final data = doc.data() as Map<String, dynamic>;
-        return Message.fromMap(data, doc.id);
-      }).toList();
-      
-      // Reverse to show oldest first
+      List<Message> messages;
+        if (recipientId != null && groupId == null) {
+        // Private chat - use special method to get both directions
+        print('   📱 Loading private chat messages');
+        messages = await _getPrivateChatMessages(recipientId, limit: _initialLoadCount);
+        
+        // Set pagination state for private chats
+        _lastDocuments[cacheKey] = null; // TODO: Implement proper pagination for private chats
+        _hasMoreMessages[cacheKey] = messages.length == _initialLoadCount;
+      } else {
+        // General or group chat - use normal query
+        final chatType = recipientId == null && groupId == null ? 'general' : 'group';
+        print('   🌐 Loading $chatType chat messages');
+        
+        Query query = _buildMessageQuery(recipientId: recipientId, groupId: groupId);
+        query = query.orderBy('timestamp', descending: true).limit(_initialLoadCount);
+        
+        final snapshot = await query.get();
+        print('   📥 Got ${snapshot.docs.length} messages from Firestore');
+        
+        messages = snapshot.docs.map((doc) {
+          final data = doc.data() as Map<String, dynamic>;
+          return Message.fromMap(data, doc.id);
+        }).toList();
+        
+        _lastDocuments[cacheKey] = snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
+        _hasMoreMessages[cacheKey] = snapshot.docs.length == _initialLoadCount;
+      }
+        // Sort to show oldest first
       messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
       
       _messageCache[cacheKey] = messages;
-      _lastDocuments[cacheKey] = snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
-      _hasMoreMessages[cacheKey] = snapshot.docs.length == _initialLoadCount;
+      print('   ✅ Cached ${messages.length} messages');
       
       // Notify listeners with the loaded messages
       if (_messageControllers.containsKey(cacheKey)) {
         _messageControllers[cacheKey]!.add(List.from(messages));
+        print('   📤 Sent messages to UI');
       }
       
       // Set up real-time listener for new messages
       _setupRealtimeListener(cacheKey, recipientId: recipientId, groupId: groupId);
     } catch (e) {
-      print('Error loading initial messages for $cacheKey: $e');
+      print('❌ Error loading initial messages: $e');
       // Still set up listener even if initial load fails
       _setupRealtimeListener(cacheKey, recipientId: recipientId, groupId: groupId);
     }
@@ -302,24 +348,26 @@ class ChatService {
     if (user == null) throw Exception('User not authenticated');
 
     if (recipientId == null && groupId == null) {
-      // General chat - use general_chat collection or messages without recipientId/groupId
-      print('Building query for general chat');
-      return _firestore
-          .collection('general_messages');
-    } else if (groupId != null) {
-      // Group chat
-      print('Building query for group chat: $groupId');
+      // General chat - use chatType field
+      print('    🔍 Building general chat query using chatType');
       return _firestore
           .collection('messages')
+          .where('chatType', isEqualTo: 'general');
+    } else if (groupId != null) {
+      // Group chat - use chatType + groupId
+      print('    🔍 Building group chat query (chatType: group, groupId: $groupId)');
+      return _firestore
+          .collection('messages')
+          .where('chatType', isEqualTo: 'group')
           .where('groupId', isEqualTo: groupId);
     } else {
-      // Private chat
-      print('Building query for private chat with: $recipientId');
+      // Private chat - use chatType + chatRoomId
       final chatRoomId = _getChatRoomId(user.uid, recipientId!);
+      print('    🔍 Building private chat query (chatType: private, chatRoomId: $chatRoomId)');
       return _firestore
-          .collection('private_chats')
-          .doc(chatRoomId)
-          .collection('messages');
+          .collection('messages')
+          .where('chatType', isEqualTo: 'private')
+          .where('chatRoomId', isEqualTo: chatRoomId);
     }
   }
 
@@ -429,12 +477,10 @@ class ChatService {
   }) async {
     return await createGroup(name, description, memberIds);
   }
+
   Stream<List<Map<String, dynamic>>> getGroups() {
     final user = _auth.currentUser;
-    if (user == null) {
-      print('User not authenticated for getGroups');
-      return Stream.value([]);
-    }
+    if (user == null) return Stream.value([]);
 
     return _firestore
         .collection('groups')
@@ -446,9 +492,6 @@ class ChatService {
         data['id'] = doc.id;
         return data;
       }).toList();
-    }).handleError((error) {
-      print('Error loading groups: $error');
-      return <Map<String, dynamic>>[];
     });
   }
 
@@ -580,19 +623,136 @@ class ChatService {
     }
   }
 
+  // Search messages within a chat
+  Stream<List<Message>> searchMessagesInChat(String query, {String? recipientId, String? groupId}) {
+    if (query.trim().isEmpty) {
+      return getMessagesStream(recipientId: recipientId, groupId: groupId);
+    }
+
+    final cacheKey = _getCacheKey(recipientId: recipientId, groupId: groupId);
+    
+    // Create a search-specific controller
+    final searchCacheKey = '${cacheKey}_search_${query.toLowerCase()}';
+    
+    if (!_messageControllers.containsKey(searchCacheKey)) {
+      _messageControllers[searchCacheKey] = StreamController<List<Message>>.broadcast();
+      
+      // Search through cached messages first
+      if (_messageCache.containsKey(cacheKey)) {
+        final filteredMessages = _messageCache[cacheKey]!
+            .where((message) => 
+                message.content.toLowerCase().contains(query.toLowerCase()))
+            .toList();
+        _messageControllers[searchCacheKey]!.add(filteredMessages);
+      }
+      
+      // Then search from Firestore
+      _searchInFirestore(query, searchCacheKey, recipientId: recipientId, groupId: groupId);
+    }
+    
+    return _messageControllers[searchCacheKey]!.stream;
+  }
+
+  Future<void> _searchInFirestore(String query, String searchCacheKey, {String? recipientId, String? groupId}) async {
+    try {
+      Query baseQuery = _buildMessageQuery(recipientId: recipientId, groupId: groupId);
+      
+      // Firestore doesn't support case-insensitive text search natively
+      // So we'll fetch all messages and filter client-side for now
+      final snapshot = await baseQuery
+          .orderBy('timestamp', descending: true)
+          .limit(500) // Limit to recent messages for performance
+          .get();
+      
+      final filteredMessages = snapshot.docs
+          .map((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return Message.fromMap(data, doc.id);
+          })
+          .where((message) => 
+              message.content.toLowerCase().contains(query.toLowerCase()))
+          .toList();
+      
+      // Sort by timestamp (newest first for search results)
+      filteredMessages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      
+      if (_messageControllers.containsKey(searchCacheKey)) {
+        _messageControllers[searchCacheKey]!.add(filteredMessages);
+      }
+    } catch (e) {
+      print('Error searching messages: $e');
+    }
+  }
+  // Special method for private chat to get messages using unified structure
+  Future<List<Message>> _getPrivateChatMessages(String recipientId, {DocumentSnapshot? startAfter, int limit = 50}) async {
+    final user = _auth.currentUser;
+    if (user == null) return [];
+
+    try {
+      print('    🔍 Getting private chat messages using unified structure');
+      final chatRoomId = _getChatRoomId(user.uid, recipientId);
+      print('    📱 ChatRoomId: $chatRoomId');
+      
+      // Use the unified query structure
+      Query query = _firestore
+          .collection('messages')
+          .where('chatType', isEqualTo: 'private')
+          .where('chatRoomId', isEqualTo: chatRoomId);
+
+      if (startAfter != null) {
+        query = query.orderBy('timestamp', descending: true).startAfterDocument(startAfter).limit(limit);
+      } else {
+        query = query.orderBy('timestamp', descending: true).limit(limit);
+      }
+
+      final snapshot = await query.get();
+      print('    📥 Got ${snapshot.docs.length} private messages from Firestore');
+
+      final messages = snapshot.docs.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        return Message.fromMap(data, doc.id);
+      }).toList();
+
+      return messages;
+    } catch (e) {
+      print('❌ Error getting private chat messages: $e');
+      return [];
+    }
+  }
+
+  // Migration method to add chatType to existing general messages
+  Future<void> migrateGeneralMessages() async {
+    try {
+      print('🔄 Starting migration of general messages...');
+      
+      // Find messages where both groupId and recipientId are empty strings
+      final snapshot = await _firestore
+          .collection('messages')
+          .where('groupId', isEqualTo: '')
+          .where('recipientId', isEqualTo: '')
+          .get();
+      
+      print('📋 Found ${snapshot.docs.length} messages to migrate');
+      
+      // Update each message to add chatType field
+      final batch = _firestore.batch();
+      for (final doc in snapshot.docs) {
+        batch.update(doc.reference, {'chatType': 'general'});
+      }
+      
+      await batch.commit();
+      print('✅ Migration completed successfully!');
+    } catch (e) {
+      print('❌ Migration failed: $e');
+    }
+  }
+
   // Helper methods
   String _getCacheKey({String? recipientId, String? groupId}) {
     if (groupId != null) return 'group_$groupId';
     if (recipientId != null) return 'private_$recipientId';
     return 'general';
   }
-
-  String _getChatRoomId(String userId1, String userId2) {
-    List<String> ids = [userId1, userId2];
-    ids.sort();
-    return ids.join('_');
-  }
-
   void _addMessageToCache(String cacheKey, Message message, {bool notify = true}) {
     if (!_messageCache.containsKey(cacheKey)) {
       _messageCache[cacheKey] = [];
@@ -648,6 +808,31 @@ class ChatService {
     }
   }
 
+  // Clear cache for a specific chat (useful when switching chats)
+  void clearChatCache({String? recipientId, String? groupId}) {
+    final cacheKey = _getCacheKey(recipientId: recipientId, groupId: groupId);
+    
+    // Cancel existing stream subscription
+    _activeStreams[cacheKey]?.cancel();
+    _activeStreams.remove(cacheKey);
+    
+    // Close and remove controller
+    _messageControllers[cacheKey]?.close();
+    _messageControllers.remove(cacheKey);
+    
+    // Clear cache data
+    _messageCache.remove(cacheKey);
+    _lastDocuments.remove(cacheKey);
+    _hasMoreMessages.remove(cacheKey);
+    _isLoadingMore.remove(cacheKey);
+  }
+
+  // Force refresh of a chat (clears cache and reloads)
+  void refreshChat({String? recipientId, String? groupId}) {
+    clearChatCache(recipientId: recipientId, groupId: groupId);
+    // The next call to getMessagesStream will recreate everything
+  }
+
   // Cleanup
   void dispose() {
     _presenceTimer?.cancel();
@@ -663,5 +848,11 @@ class ChatService {
     _lastDocuments.clear();
     _hasMoreMessages.clear();
     _isLoadingMore.clear();
+  }
+
+  String _getChatRoomId(String userId1, String userId2) {
+    List<String> ids = [userId1, userId2];
+    ids.sort();
+    return ids.join('_');
   }
 }
