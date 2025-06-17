@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 import 'package:uuid/uuid.dart';
+import 'package:socket_io_client/socket_io_client.dart' as IO;
 import '../models/call_model.dart';
 import '../models/call_log.dart';
 
@@ -11,16 +12,26 @@ class CallService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final Uuid _uuid = const Uuid();
   
+  // Socket connection for real-time call events
+  IO.Socket? _socket;
+  
   // Current call state
   Call? _currentCall;
   StreamSubscription<DocumentSnapshot>? _callSubscription;
   final StreamController<Call?> _callStateController = StreamController<Call?>.broadcast();
+  final StreamController<Map<String, dynamic>> _incomingCallController = StreamController<Map<String, dynamic>>.broadcast();
   
   // Ringtone management
   bool _isRinging = false;
   Timer? _ringingTimer;
+  Timer? _callTimeoutTimer;
+  
+  // Call timeout duration (should match server)
+  static const int callTimeoutDuration = 45; // seconds
+  static const int ringDuration = 30; // seconds
   
   Stream<Call?> get callStateStream => _callStateController.stream;
+  Stream<Map<String, dynamic>> get incomingCallStream => _incomingCallController.stream;
   Call? get currentCall => _currentCall;
   bool get isInCall => _currentCall?.isActive == true;
 
@@ -84,64 +95,251 @@ class CallService {
     }
   }
 
+  // Initialize socket connection for real-time call events
+  void initializeSocket(String serverUrl) {
+    _socket = IO.io(serverUrl, <String, dynamic>{
+      'transports': ['websocket'],
+      'autoConnect': false,
+    });
+    
+    _socket!.connect();
+    
+    // Listen for incoming calls
+    _socket!.on('incoming-call', (data) {
+      print('Incoming call received: $data');
+      _handleIncomingCall(data);
+    });
+    
+    // Listen for call accepted
+    _socket!.on('call-accepted', (data) {
+      print('Call accepted: $data');
+      _handleCallAccepted(data);
+    });
+    
+    // Listen for call rejected
+    _socket!.on('call-rejected', (data) {
+      print('Call rejected: $data');
+      _handleCallRejected(data);
+    });
+    
+    // Listen for call timeout
+    _socket!.on('call-timeout', (data) {
+      print('Call timeout: $data');
+      _handleCallTimeout(data);
+    });
+    
+    // Listen for call ended
+    _socket!.on('call-ended', (data) {
+      print('Call ended: $data');
+      _handleCallEnded(data);
+    });
+    
+    // Listen for participant busy
+    _socket!.on('participant-busy', (data) {
+      print('Participant busy: $data');
+      _handleParticipantBusy(data);
+    });
+    
+    // Listen for video/audio toggles
+    _socket!.on('participant-video-toggle', (data) {
+      _handleVideoToggle(data);
+    });
+    
+    _socket!.on('participant-audio-toggle', (data) {
+      _handleAudioToggle(data);
+    });
+    
+    // Identify user to server
+    final user = _auth.currentUser;
+    if (user != null) {
+      _socket!.emit('identify', {
+        'userId': user.uid,
+        'userEmail': user.email,
+      });
+    }
+  }
+  
+  // Enhanced call initiation with socket support
+  Future<String> initiateCallWithSocket({
+    required String recipientId,
+    required String recipientName,
+    required String recipientEmail,
+    required CallType type,
+    String? groupId,
+    String? groupName,
+    List<String>? additionalParticipants,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) throw Exception('User not authenticated');
+
+    if (_currentCall?.isActive == true) {
+      throw Exception('Another call is already in progress');
+    }
+
+    final callId = _uuid.v4();
+    List<String> participantIds = [recipientId];
+    
+    if (additionalParticipants != null) {
+      participantIds.addAll(additionalParticipants);
+    }
+    
+    final isVideo = type == CallType.video;
+    final isGroup = groupId != null || (additionalParticipants?.isNotEmpty == true);
+      // Create call object
+    final call = Call(
+      id: callId,
+      callerId: user.uid,
+      callerName: user.displayName ?? user.email?.split('@')[0] ?? 'Unknown',
+      callerEmail: user.email ?? '',
+      type: type,
+      state: CallState.ringing,
+      createdAt: DateTime.now(),
+      participantIds: [user.uid, ...participantIds],
+      participantNames: {
+        user.uid: user.displayName ?? user.email?.split('@')[0] ?? 'Unknown',
+        recipientId: recipientName,
+      },
+      groupId: groupId,
+      groupName: groupName,
+    );
+    
+    _currentCall = call;
+    _callStateController.add(call);
+    
+    // Initiate call via socket
+    if (_socket != null && _socket!.connected) {
+      _socket!.emit('initiate-call', {
+        'roomId': callId,
+        'callerId': user.uid,
+        'callerName': user.displayName ?? user.email?.split('@')[0] ?? 'Unknown',
+        'participantIds': participantIds,
+        'isVideo': isVideo,
+        'isGroup': isGroup,
+      });
+      
+      // Start call timeout
+      _startCallTimeout(callId);
+    } else {
+      // Fallback to Firestore method
+      return initiateCall(
+        recipientId: recipientId,
+        recipientName: recipientName,
+        recipientEmail: recipientEmail,
+        type: type,
+        groupId: groupId,
+        groupName: groupName,
+        additionalParticipants: additionalParticipants,
+      );
+    }
+    
+    return callId;
+  }
+  
   // Accept incoming call
   Future<void> acceptCall(String callId) async {
-    try {
-      await _updateCallState(callId, CallState.connecting);
-      _stopRingtone();
-      
-      // Simulate connection process
-      await Future.delayed(const Duration(seconds: 2));
-      await _updateCallState(callId, CallState.connected, startedAt: DateTime.now());
-    } catch (e) {
-      print('Error accepting call: $e');
-      await endCall(callId, 'connection_failed');
+    final user = _auth.currentUser;
+    if (user == null) return;
+    
+    if (_socket != null && _socket!.connected) {
+      _socket!.emit('accept-call', {
+        'roomId': callId,
+        'userId': user.uid,
+      });
+    }
+    
+    // Stop ringing
+    _stopRinging();
+      // Update call status
+    if (_currentCall?.id == callId) {
+      _currentCall = _currentCall!.copyWith(
+        state: CallState.connected,
+        startedAt: DateTime.now(),
+      );
+      _callStateController.add(_currentCall);
     }
   }
-
-  // Decline incoming call
-  Future<void> declineCall(String callId) async {
-    try {
-      await _updateCallState(callId, CallState.declined, endedAt: DateTime.now());
-      _stopRingtone();
-      await _createCallLog(callId, CallLogStatus.declined);
-    } catch (e) {
-      print('Error declining call: $e');
+  
+  // Reject/decline incoming call
+  Future<void> rejectCall(String callId, {String reason = 'declined'}) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    
+    if (_socket != null && _socket!.connected) {
+      _socket!.emit('reject-call', {
+        'roomId': callId,
+        'userId': user.uid,
+        'reason': reason,
+      });
+    }
+    
+    // Stop ringing
+    _stopRinging();
+    
+    // Clear current call
+    _currentCall = null;
+    _callStateController.add(null);
+  }
+  
+  // End active call
+  Future<void> endCall(String callId, {String reason = 'ended'}) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    
+    if (_socket != null && _socket!.connected) {
+      _socket!.emit('end-call', {
+        'roomId': callId,
+        'endedBy': user.uid,
+        'reason': reason,
+      });
+    }
+    
+    // Stop ringing and cleanup
+    _stopRinging();
+    _cancelCallTimeout();
+      // Update call status
+    if (_currentCall?.id == callId) {
+      _currentCall = _currentCall!.copyWith(
+        state: CallState.ended,
+        endedAt: DateTime.now(),
+        endReason: reason,
+      );
+      
+      // Log the call
+      await _logCall(_currentCall!);
+      
+      _currentCall = null;
+      _callStateController.add(null);
     }
   }
-  // End call
-  Future<void> endCall(String callId, [String? reason]) async {
-    try {
-      final endTime = DateTime.now();
-      await _updateCallState(callId, CallState.ended, endedAt: endTime, endReason: reason);
-      _stopRingtone();
-      
-      // Always create call log regardless of call duration
-      CallLogStatus logStatus;
-      if (_currentCall?.startedAt != null) {
-        // Call was connected - calculate duration
-        final duration = endTime.difference(_currentCall!.startedAt!).inSeconds;
-        await _firestore.collection('calls').doc(callId).update({
-          'duration': duration,
+  
+  // Toggle video during call
+  Future<void> toggleVideo(String callId, bool isVideoEnabled) async {
+    if (_socket != null && _socket!.connected) {
+      final user = _auth.currentUser;
+      if (user != null) {
+        _socket!.emit('toggle-video', {
+          'roomId': callId,
+          'userId': user.uid,
+          'isVideoEnabled': isVideoEnabled,
         });
-        logStatus = CallLogStatus.completed;
-      } else if (reason == 'declined') {
-        logStatus = CallLogStatus.declined;
-      } else if (reason == 'failed') {
-        logStatus = CallLogStatus.failed;
-      } else {
-        // Call ended before being answered (including instant hangups)
-        logStatus = CallLogStatus.missed;
       }
-      
-      // Create call log for all scenarios
-      await _createCallLog(callId, logStatus);
-      
-    } catch (e) {
-      print('Error ending call: $e');
     }
   }
-
+  
+  // Toggle audio during call
+  Future<void> toggleAudio(String callId, bool isAudioEnabled) async {
+    if (_socket != null && _socket!.connected) {
+      final user = _auth.currentUser;
+      if (user != null) {
+        _socket!.emit('toggle-audio', {
+          'roomId': callId,
+          'userId': user.uid,
+          'isAudioEnabled': isAudioEnabled,
+        });
+      }
+    }
+  }
+  
   // Listen to call updates
   void _listenToCall(String callId) {
     _callSubscription?.cancel();
@@ -396,8 +594,260 @@ class CallService {
     _stopRingtone();
   }
 
+  // Handle incoming call
+  void _handleIncomingCall(Map<String, dynamic> data) {
+    final callId = data['roomId'] as String;
+    final callerId = data['callerId'] as String;
+    final callerName = data['callerName'] as String;
+    final isVideo = data['isVideo'] as bool? ?? false;
+    final isGroup = data['isGroup'] as bool? ?? false;
+    final participantIds = List<String>.from(data['participantIds'] ?? []);
+    
+    // Check if user is already in a call
+    if (_currentCall?.isActive == true) {
+      // User is busy, notify server
+      if (_socket != null && _socket!.connected) {
+        final user = _auth.currentUser;
+        if (user != null) {
+          _socket!.emit('call-busy', {
+            'roomId': callId,
+            'userId': user.uid,
+          });
+        }
+      }
+      return;
+    }
+    
+    // Create incoming call object
+    final call = Call(
+      id: callId,
+      initiatorId: callerId,
+      initiatorName: callerName,
+      recipientId: _auth.currentUser?.uid ?? '',
+      recipientName: '',
+      type: isVideo ? CallType.video : CallType.audio,
+      status: CallStatus.ringing,
+      createdAt: DateTime.now(),
+      isActive: false,
+      participantIds: [callerId, ..._auth.currentUser?.uid != null ? [_auth.currentUser!.uid] : [], ...participantIds],
+      groupId: isGroup ? callId : null,
+      groupName: isGroup ? 'Group Call' : null,
+    );
+    
+    _currentCall = call;
+    _callStateController.add(call);
+    
+    // Start ringing
+    _startRinging();
+    
+    // Emit to incoming call stream for UI
+    _incomingCallController.add({
+      'call': call,
+      'action': 'incoming',
+    });
+  }
+  
+  // Handle call accepted
+  void _handleCallAccepted(Map<String, dynamic> data) {
+    final callId = data['roomId'] as String;
+    final acceptedBy = data['acceptedBy'] as String;
+    
+    if (_currentCall?.id == callId) {
+      _currentCall = _currentCall!.copyWith(
+        status: CallStatus.active,
+        isActive: true,
+        acceptedAt: DateTime.now(),
+      );
+      _callStateController.add(_currentCall);
+      
+      // Stop any ringing
+      _stopRinging();
+      _cancelCallTimeout();
+    }
+  }
+  
+  // Handle call rejected
+  void _handleCallRejected(Map<String, dynamic> data) {
+    final callId = data['roomId'] as String;
+    final rejectedBy = data['rejectedBy'] as String;
+    final reason = data['reason'] as String? ?? 'declined';
+    
+    if (_currentCall?.id == callId) {
+      _currentCall = _currentCall!.copyWith(
+        status: CallStatus.rejected,
+        isActive: false,
+      );
+      
+      // Log the call
+      _logCall(_currentCall!);
+      
+      // Stop ringing and cleanup
+      _stopRinging();
+      _cancelCallTimeout();
+      
+      // Clear current call
+      _currentCall = null;
+      _callStateController.add(null);
+      
+      // Notify UI
+      _incomingCallController.add({
+        'action': 'rejected',
+        'reason': reason,
+        'rejectedBy': rejectedBy,
+      });
+    }
+  }
+  
+  // Handle call timeout
+  void _handleCallTimeout(Map<String, dynamic> data) {
+    final callId = data['roomId'] as String;
+    final reason = data['reason'] as String? ?? 'no_answer';
+    
+    if (_currentCall?.id == callId) {
+      _currentCall = _currentCall!.copyWith(
+        status: CallStatus.missed,
+        isActive: false,
+      );
+      
+      // Log the call
+      _logCall(_currentCall!);
+      
+      // Stop ringing and cleanup
+      _stopRinging();
+      _cancelCallTimeout();
+      
+      // Clear current call
+      _currentCall = null;
+      _callStateController.add(null);
+      
+      // Notify UI
+      _incomingCallController.add({
+        'action': 'timeout',
+        'reason': reason,
+      });
+    }
+  }
+  
+  // Handle call ended
+  void _handleCallEnded(Map<String, dynamic> data) {
+    final callId = data['roomId'] as String;
+    final endedBy = data['endedBy'] as String?;
+    final reason = data['reason'] as String? ?? 'ended';
+    
+    if (_currentCall?.id == callId) {
+      _currentCall = _currentCall!.copyWith(
+        status: CallStatus.ended,
+        isActive: false,
+        endedAt: DateTime.now(),
+      );
+      
+      // Log the call
+      _logCall(_currentCall!);
+      
+      // Stop ringing and cleanup
+      _stopRinging();
+      _cancelCallTimeout();
+      
+      // Clear current call
+      _currentCall = null;
+      _callStateController.add(null);
+      
+      // Notify UI
+      _incomingCallController.add({
+        'action': 'ended',
+        'reason': reason,
+        'endedBy': endedBy,
+      });
+    }
+  }
+  
+  // Handle participant busy
+  void _handleParticipantBusy(Map<String, dynamic> data) {
+    final busyUserId = data['busyUserId'] as String;
+    
+    // Notify UI that participant is busy
+    _incomingCallController.add({
+      'action': 'participant_busy',
+      'busyUserId': busyUserId,
+    });
+  }
+  
+  // Handle video toggle
+  void _handleVideoToggle(Map<String, dynamic> data) {
+    final userId = data['userId'] as String;
+    final isVideoEnabled = data['isVideoEnabled'] as bool;
+    
+    // Notify UI about video toggle
+    _incomingCallController.add({
+      'action': 'video_toggle',
+      'userId': userId,
+      'isVideoEnabled': isVideoEnabled,
+    });
+  }
+  
+  // Handle audio toggle
+  void _handleAudioToggle(Map<String, dynamic> data) {
+    final userId = data['userId'] as String;
+    final isAudioEnabled = data['isAudioEnabled'] as bool;
+    
+    // Notify UI about audio toggle
+    _incomingCallController.add({
+      'action': 'audio_toggle',
+      'userId': userId,
+      'isAudioEnabled': isAudioEnabled,
+    });
+  }
+  
+  // Start call timeout timer
+  void _startCallTimeout(String callId) {
+    _cancelCallTimeout(); // Cancel any existing timeout
+    
+    _callTimeoutTimer = Timer(Duration(seconds: callTimeoutDuration), () {
+      // Call timed out
+      _handleCallTimeout({
+        'roomId': callId,
+        'reason': 'timeout',
+      });
+    });
+  }
+  
+  // Cancel call timeout timer
+  void _cancelCallTimeout() {
+    _callTimeoutTimer?.cancel();
+    _callTimeoutTimer = null;
+  }
+  
+  // Enhanced ringing with timeout
+  void _startRinging() {
+    if (_isRinging) return;
+    
+    _isRinging = true;
+    FlutterRingtonePlayer.playRingtone();
+    
+    // Auto-stop ringing after ring duration
+    _ringingTimer = Timer(Duration(seconds: ringDuration), () {
+      _stopRinging();
+    });
+  }
+  
+  // Stop ringing
+  void _stopRinging() {
+    if (!_isRinging) return;
+    
+    _isRinging = false;
+    FlutterRingtonePlayer.stop();
+    _ringingTimer?.cancel();
+    _ringingTimer = null;
+  }
+  
+  // Dispose socket connection
   void dispose() {
-    _cleanup();
+    _socket?.disconnect();
+    _socket?.dispose();
+    _callSubscription?.cancel();
     _callStateController.close();
+    _incomingCallController.close();
+    _stopRinging();
+    _cancelCallTimeout();
   }
 }

@@ -17,6 +17,7 @@ import '../models/chat_item.dart';
 import 'profile_screen.dart';
 import 'group_info_screen.dart';
 import 'call_screen.dart';
+import 'credits_screen.dart';
 import '../widgets/create_group_dialog.dart';
 import '../widgets/linkify_text.dart';
 import '../widgets/badged_user_name.dart';
@@ -598,8 +599,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
                 )
-              else
-                PopupMenuButton<String>(
+              else                PopupMenuButton<String>(
                   onSelected: (value) async {
                     if (value == 'logout') {
                       await Provider.of<AuthService>(context, listen: false).signOut();
@@ -607,6 +607,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                       Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (context) => const NewProfileScreen(isEditable: true),
+                        ),
+                      );
+                    } else if (value == 'credits') {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => const CreditsScreen(),
                         ),
                       );
                     }
@@ -619,6 +625,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                           Icon(Icons.person_outline, size: 18),
                           SizedBox(width: 8),
                           Text('Profile'),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'credits',
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, size: 18),
+                          SizedBox(width: 8),
+                          Text('About'),
                         ],
                       ),
                     ),
@@ -1013,8 +1029,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              const SizedBox(height: 20),
-              ListTile(
+              const SizedBox(height: 20),              ListTile(
                 leading: const Icon(Icons.person_outline, color: Color(0xFF2F3437)),
                 title: const Text('Profile'),
                 onTap: () {
@@ -1022,6 +1037,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (context) => const NewProfileScreen(isEditable: true),
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.info_outline, color: Color(0xFF2F3437)),
+                title: const Text('About'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => const CreditsScreen(),
                     ),
                   );
                 },
@@ -2026,13 +2053,26 @@ class _UserListItem extends StatelessWidget {
     required this.onTap,
     required this.chatService,
   });
-
   @override
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
+        onLongPress: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => NewProfileScreen(
+                user: user,
+                isEditable: false,
+                onMessageTap: () {
+                  Navigator.pop(context); // Close profile screen
+                  onTap(); // Open chat with user
+                },
+              ),
+            ),
+          );
+        },
         borderRadius: BorderRadius.circular(6),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
