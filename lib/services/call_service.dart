@@ -711,15 +711,68 @@ class CallService extends ChangeNotifier {
         duration: call.duration,
         userId: user.uid,
       );
-      
-      // Save to Firestore
+        // Save to Firestore
       await _firestore
           .collection('users')
           .doc(user.uid)
           .collection('call_logs')
           .add(callLog.toMap());
+          
+      // Also add the call log to the chat if it's a 1:1 call
+      if (!call.isGroupCall && call.participantIds.length == 2) {
+        final otherUserId = call.participantIds.firstWhere((id) => id != user.uid);
+        final chatId = _getChatId(user.uid, otherUserId);
+        
+        // Import ChatService to add call log to chat
+        // Note: This would need to be imported at the top of the file
+        // For now, we'll add the call log directly to the chat's messages collection
+        await _addCallLogToChat(chatId, callLog);
+      }
     } catch (e) {
       print('Error logging call: $e');
+    }
+  }
+  
+  // Helper method to generate consistent chat ID for 1:1 chats
+  String _getChatId(String userId1, String userId2) {
+    final sortedIds = [userId1, userId2]..sort();
+    return '${sortedIds[0]}_${sortedIds[1]}';
+  }
+  
+  // Add call log to chat messages
+  Future<void> _addCallLogToChat(String chatId, CallLog callLog) async {
+    try {
+      final callLogData = {
+        'id': callLog.id,
+        'callId': callLog.callId,
+        'type': callLog.type.toString().split('.').last,
+        'status': callLog.status.toString().split('.').last,
+        'isVideo': callLog.isVideo,
+        'participantId': callLog.participantId,
+        'participantName': callLog.participantName,
+        'participantEmail': callLog.participantEmail,
+        'groupId': callLog.groupId,
+        'groupName': callLog.groupName,
+        'timestamp': Timestamp.fromDate(callLog.timestamp),
+        'duration': callLog.duration,
+        'userId': callLog.userId,
+        'messageType': 'call_log', // Special type to identify call logs
+        'senderId': callLog.userId,
+        'senderName': callLog.participantName,
+        'senderEmail': callLog.participantEmail,
+      };
+
+      // Add to the chat's messages collection
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(callLog.id)
+          .set(callLogData);
+
+      print('Call log added to chat: $chatId');
+    } catch (e) {
+      print('Error adding call log to chat: $e');
     }
   }
 

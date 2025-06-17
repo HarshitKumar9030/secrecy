@@ -51,8 +51,8 @@ class SecrecyApp extends StatelessWidget {
     );    return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (context) => AuthService()),
-        Provider(create: (context) => CallService()),
-      ],      child: Consumer<CallService>(
+        ChangeNotifierProvider(create: (context) => CallService()),
+      ],child: Consumer<CallService>(
         builder: (context, callService, child) {
           return StreamBuilder<Call?>(
             stream: callService.callStateStream,

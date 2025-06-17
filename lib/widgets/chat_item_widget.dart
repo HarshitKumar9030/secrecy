@@ -4,6 +4,7 @@ import '../models/message.dart';
 import '../models/call_log.dart';
 import '../services/chat_service.dart';
 import '../widgets/badged_user_name.dart';
+import '../widgets/linkify_text.dart';
 import 'package:intl/intl.dart';
 
 class ChatItemWidget extends StatelessWidget {
@@ -186,30 +187,42 @@ class ChatItemWidget extends StatelessWidget {
       ),
     );
   }
-
   Widget _buildMessageContent(Message message) {
     switch (message.type) {
       case MessageType.text:
-        return Text(
-          message.content,
+        return LinkifyText(
+          text: message.content,
           style: const TextStyle(
             fontSize: 14,
             color: Color(0xFF37352F),
             height: 1.4,
           ),
-        );
-      case MessageType.image:
+          linkStyle: const TextStyle(
+            fontSize: 14,
+            color: Color(0xFF0B6BCB),
+            decoration: TextDecoration.underline,
+            height: 1.4,
+          ),
+          enableEmbeds: true,
+        );      case MessageType.image:
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (message.content.isNotEmpty) ...[
-              Text(
-                message.content,
+              LinkifyText(
+                text: message.content,
                 style: const TextStyle(
                   fontSize: 14,
                   color: Color(0xFF37352F),
                   height: 1.4,
                 ),
+                linkStyle: const TextStyle(
+                  fontSize: 14,
+                  color: Color(0xFF0B6BCB),
+                  decoration: TextDecoration.underline,
+                  height: 1.4,
+                ),
+                enableEmbeds: false, // Disable embeds for image captions
               ),
               const SizedBox(height: 8),
             ],
@@ -249,19 +262,25 @@ class ChatItemWidget extends StatelessWidget {
               ),
             ),
           ],
-        );
-      case MessageType.video:
+        );      case MessageType.video:
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (message.content.isNotEmpty) ...[
-              Text(
-                message.content,
+              LinkifyText(
+                text: message.content,
                 style: const TextStyle(
                   fontSize: 14,
                   color: Color(0xFF37352F),
                   height: 1.4,
                 ),
+                linkStyle: const TextStyle(
+                  fontSize: 14,
+                  color: Color(0xFF0B6BCB),
+                  decoration: TextDecoration.underline,
+                  height: 1.4,
+                ),
+                enableEmbeds: false, // Disable embeds for video captions
               ),
               const SizedBox(height: 8),
             ],

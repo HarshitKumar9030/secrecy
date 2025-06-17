@@ -919,6 +919,115 @@ class ChatService {
     }
   }
 
+  // Add call log to chat as a chat item
+  Future<void> addCallLogToChat(String chatId, CallLog callLog) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return;
+
+      // Create a call log message
+      final callLogData = {
+        'id': callLog.id,
+        'callId': callLog.callId,
+        'type': callLog.type.toString().split('.').last,
+        'status': callLog.status.toString().split('.').last,
+        'isVideo': callLog.isVideo,
+        'participantId': callLog.participantId,
+        'participantName': callLog.participantName,
+        'participantEmail': callLog.participantEmail,
+        'groupId': callLog.groupId,
+        'groupName': callLog.groupName,
+        'timestamp': Timestamp.fromDate(callLog.timestamp),
+        'duration': callLog.duration,
+        'userId': callLog.userId,
+        'messageType': 'call_log', // Special type to identify call logs
+      };
+
+      // Add to the chat's messages collection
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(callLog.id)
+          .set(callLogData);
+
+      print('Call log added to chat: $chatId');
+    } catch (e) {
+      print('Error adding call log to chat: $e');
+    }
+  }
+  // Listen to call logs for a chat and integrate them with messages
+  Stream<List<ChatItem>> getChatItemsWithCallLogsStream(String chatId) {
+    if (_chatItemControllers.containsKey(chatId)) {
+      return _chatItemControllers[chatId]!.stream;
+    }
+
+    final controller = StreamController<List<ChatItem>>.broadcast();
+    _chatItemControllers[chatId] = controller;
+
+    // Listen to both messages and call logs
+    _firestore
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .orderBy('timestamp', descending: true)
+        .limit(_initialLoadCount)
+        .snapshots()
+        .listen((snapshot) {
+      try {
+        final chatItems = <ChatItem>[];
+
+        for (var doc in snapshot.docs) {
+          final data = doc.data();
+          final messageType = data['messageType'] as String?;
+
+          if (messageType == 'call_log') {
+            // It's a call log
+            final callLog = CallLog(
+              id: doc.id,
+              callId: data['callId'] ?? '',
+              type: CallLogType.values.firstWhere(
+                (e) => e.toString() == 'CallLogType.${data['type']}',
+                orElse: () => CallLogType.incoming,
+              ),
+              status: CallLogStatus.values.firstWhere(
+                (e) => e.toString() == 'CallLogStatus.${data['status']}',
+                orElse: () => CallLogStatus.completed,
+              ),
+              isVideo: data['isVideo'] ?? false,
+              participantId: data['participantId'] ?? '',
+              participantName: data['participantName'] ?? '',
+              participantEmail: data['participantEmail'] ?? '',
+              groupId: data['groupId'],
+              groupName: data['groupName'],
+              timestamp: (data['timestamp'] as Timestamp).toDate(),
+              duration: data['duration'],
+              userId: data['userId'] ?? '',
+            );            chatItems.add(CallLogChatItem(callLog));
+          } else {
+            // It's a regular message
+            final message = Message.fromMap(data, doc.id);
+            chatItems.add(MessageChatItem(message));
+          }
+        }
+
+        // Sort by timestamp (most recent first)
+        chatItems.sort((a, b) {
+          final aTime = a.isMessage ? a.asMessage.timestamp : a.asCallLog.timestamp;
+          final bTime = b.isMessage ? b.asMessage.timestamp : b.asCallLog.timestamp;
+          return bTime.compareTo(aTime);
+        });
+
+        controller.add(chatItems);
+      } catch (e) {
+        print('Error processing chat items: $e');
+        controller.addError(e);
+      }
+    });
+
+    return controller.stream;
+  }
+
   // Cleanup
   void dispose() {
     _presenceTimer?.cancel();
