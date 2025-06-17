@@ -78,16 +78,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
     final currentUser = authService.user;
-    final isLargeScreen = MediaQuery.of(context).size.width > 768;
-
-    return Scaffold(
+    final isLargeScreen = MediaQuery.of(context).size.width > 768;    return Scaffold(
       backgroundColor: const Color(0xFFF7F6F3),
-      body: Stack(
-        children: [
-          // Main chat area
-          Column(
-            children: [
-              // Chat header
+      body: SafeArea(
+        child: Stack(
+          children: [
+            // Main chat area
+            Column(
+              children: [
+                // Chat header
               Container(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
                 decoration: const BoxDecoration(
@@ -387,12 +386,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                         ),
                       ),
                       child: _buildSidebar(currentUser, isLargeScreen),
-                    ),
-                  ),
+                    ),                  ),
                 ),
               ),
             ),
         ],
+        ),
       ),
     );
   }

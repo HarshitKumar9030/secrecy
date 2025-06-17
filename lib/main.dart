@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:provider/provider.dart';
@@ -10,15 +11,12 @@ import 'screens/auth_wrapper.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Check if Firebase is already initialized
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
     
-    // Initialize Firebase App Check
     await FirebaseAppCheck.instance.activate(
-      // Use debug provider in development, reCAPTCHA in production
       webProvider: kDebugMode 
           ? ReCaptchaV3Provider('debug') 
           : ReCaptchaV3Provider('your-recaptcha-site-key'),
@@ -37,11 +35,21 @@ void main() async {
 }
 
 class SecrecyApp extends StatelessWidget {
-  const SecrecyApp({super.key});
-  @override
+  const SecrecyApp({super.key});  @override
   Widget build(BuildContext context) {
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+        systemNavigationBarColor: Colors.white,
+        systemNavigationBarIconBrightness: Brightness.dark,
+      ),
+    );
+
     return ChangeNotifierProvider(
-      create: (context) => AuthService(),      child: MaterialApp(
+      create: (context) => AuthService(),
+      child: MaterialApp(
         title: 'Secrecy',
         theme: ThemeData(
           fontFamily: 'SF Pro Display',

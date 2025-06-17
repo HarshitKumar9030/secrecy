@@ -70,8 +70,8 @@ class _AuthScreenState extends State<AuthScreen> {
       }
     }
   }
-
   Future<void> _signInWithGoogle() async {
+    print('🔵 Google Sign-In button pressed');
     setState(() {
       _isLoading = true;
     });
@@ -81,6 +81,7 @@ class _AuthScreenState extends State<AuthScreen> {
       final error = await authService.signInWithGoogle();
       
       if (error != null && mounted) {
+        print('🔴 Google Sign-In error: $error');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(error),
@@ -89,6 +90,8 @@ class _AuthScreenState extends State<AuthScreen> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           ),
         );
+      } else {
+        print('🟢 Google Sign-In successful!');
       }
     } finally {
       if (mounted) {
