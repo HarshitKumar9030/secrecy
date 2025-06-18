@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../models/call_model.dart';
-import '../services/call_service.dart';
+import '../services/call_service_improved.dart';
 import '../services/auth_service.dart';
-import '../services/webrtc_service.dart';
+import '../services/webrtc_service_new.dart';
 
 class CallScreen extends StatefulWidget {
   final Call call;
@@ -88,7 +88,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     final currentUser = authService.user;
       return Scaffold(
       backgroundColor: const Color(0xFF1A1A1A),
-      body: StreamBuilder<Call?>(        stream: context.watch<CallService>().callStateStream,
+      body: StreamBuilder<Call?>(        stream: context.watch<CallServiceImproved>().callStateStream,
         initialData: widget.call,
         builder: (context, snapshot) {
           final call = snapshot.data ?? widget.call;
@@ -318,7 +318,6 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       ),
     );
   }
-
   String _getCallStateText(CallState state) {
     switch (state) {
       case CallState.initiating:
@@ -337,6 +336,10 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         return 'Missed';
       case CallState.failed:
         return 'Failed';
+      case CallState.busy:
+        return 'Busy';
+      case CallState.cancelled:
+        return 'Cancelled';
     }
   }
 
@@ -363,18 +366,17 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       [const Color(0xFFa8caba), const Color(0xFF5d4e75)],
     ];
     return colorPairs[hash % colorPairs.length];
-  }
-  void _acceptCall(String callId) {
+  }  void _acceptCall(String callId) {
     _pulseController.stop();
     _fadeController.stop();
-    context.read<CallService>().acceptCall(callId);
+    context.read<CallServiceImproved>().acceptCall(callId);
   }
   void _declineCall(String callId) {
-    context.read<CallService>().declineCall(callId);
+    context.read<CallServiceImproved>().declineCall(callId);
   }
 
   void _endCall(String callId) {
-    context.read<CallService>().endCall(callId);
+    context.read<CallServiceImproved>().endCall(callId);
     Navigator.of(context).pop();
   }
 
@@ -424,7 +426,6 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       }
     }
   }
-
   Color _getStateColor(CallState state) {
     switch (state) {
       case CallState.initiating:
@@ -440,6 +441,10 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         return const Color(0xFF8E8E93);
       case CallState.failed:
         return const Color(0xFFFF3B30);
+      case CallState.busy:
+        return const Color(0xFFFF9500);
+      case CallState.cancelled:
+        return const Color(0xFF8E8E93);
     }
   }
   Widget _buildParticipantInfo(Call call, String? currentUserId) {

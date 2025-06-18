@@ -10,9 +10,9 @@ import '../models/call_model.dart';
 import '../models/call_log.dart';
 import 'webrtc_service.dart';
 import 'video_sdk_permission_service.dart';
+import 'event_bus.dart';
 
-class CallService extends ChangeNotifier {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+class CallService extends ChangeNotifier {  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final Uuid _uuid = const Uuid();
   final WebRTCService _webrtcService = WebRTCService();
@@ -257,10 +257,18 @@ class CallService extends ChangeNotifier {
         roomId: callId,
         isHost: false,
         enableVideo: _currentCall!.type == CallType.video,
-        enableAudio: true,
-      );
+        enableAudio: true,      );
       
       debugPrint('✅ WebRTC initialized for callee, waiting for ready signal...');
+      
+      // Signal that this participant is ready for WebRTC
+      if (_socket != null && _socket!.connected) {
+        _socket!.emit('webrtc-ready', {
+          'roomId': callId,
+          'userId': user.uid,
+        });
+        debugPrint('📡 Emitted webrtc-ready signal for callee');
+      }
     }
     
     // Join the call room
@@ -554,16 +562,53 @@ class CallService extends ChangeNotifier {
         duration: call.duration,
         userId: user.uid,
       );
-      
-      // Save to Firestore
+        // Save to Firestore
       await _firestore
           .collection('users')
           .doc(user.uid)
           .collection('call_logs')
           .doc(callLog.id)
           .set(callLog.toMap());
+          
+      // Also add the call log to the appropriate chat
+      await _addCallLogToChat(callLog);
+      
+      debugPrint('✅ Call logged successfully: ${callLog.id}');
     } catch (e) {
-      print('Error logging call: $e');
+      debugPrint('❌ Error logging call: $e');
+    }  }
+  
+  // Add call log to the appropriate chat
+  Future<void> _addCallLogToChat(CallLog callLog) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return;
+      
+      String? chatId;
+      
+      if (callLog.groupId != null) {
+        // Group call - use group ID as chat ID
+        chatId = callLog.groupId;
+      } else if (callLog.participantId.isNotEmpty) {
+        // 1-on-1 call - generate chat ID from user IDs
+        final List<String> userIds = [user.uid, callLog.participantId];
+        userIds.sort(); // Ensure consistent chat ID regardless of who calls
+        chatId = userIds.join('_');
+      }
+
+      if (chatId != null) {
+        // Emit event for ChatService to handle without circular dependency
+        EventBus().emit(CallLogCreatedEvent(
+          callLog: callLog.toMap(),
+          recipientId: callLog.participantId,
+          isGroupCall: callLog.groupId != null,
+          groupId: callLog.groupId,
+        ));
+        
+        debugPrint('📞 Call log event emitted for chat: $chatId');
+      }
+    } catch (e) {
+      debugPrint('❌ Error adding call log to chat: $e');
     }
   }
 
@@ -690,10 +735,18 @@ class CallService extends ChangeNotifier {
           roomId: callId,
           isHost: true,
           enableVideo: _currentCall!.type == CallType.video,
-          enableAudio: true,
-        );
+          enableAudio: true,        );
         
         debugPrint('✅ WebRTC initialized successfully for caller - waiting for negotiation signal');
+        
+        // Signal that this participant is ready for WebRTC
+        if (_socket != null && _socket!.connected) {
+          _socket!.emit('webrtc-ready', {
+            'roomId': callId,
+            'userId': user.uid,
+          });
+          debugPrint('📡 Emitted webrtc-ready signal for caller');
+        }
       }
       
       notifyListeners();

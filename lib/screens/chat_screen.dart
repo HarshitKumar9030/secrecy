@@ -8,7 +8,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/auth_service.dart';
 import '../services/chat_service.dart';
-import '../services/call_service.dart';
+import '../services/call_service_improved.dart';
 import '../services/permission_service.dart';
 import '../models/message.dart';
 import '../models/user.dart';
@@ -17,6 +17,7 @@ import '../models/chat_item.dart';
 import 'profile_screen.dart';
 import 'group_info_screen.dart';
 import 'credits_screen.dart';
+import 'call_logs_screen.dart';
 import '../widgets/create_group_dialog.dart';
 import '../widgets/linkify_text.dart';
 import '../widgets/badged_user_name.dart';
@@ -606,11 +607,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                         MaterialPageRoute(
                           builder: (context) => const NewProfileScreen(isEditable: true),
                         ),
-                      );
-                    } else if (value == 'credits') {
+                      );                    } else if (value == 'credits') {
                       Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (context) => const CreditsScreen(),
+                        ),
+                      );
+                    } else if (value == 'call_logs') {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => const CallLogsScreen(),
                         ),
                       );
                     }
@@ -625,14 +631,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                           Text('Profile'),
                         ],
                       ),
-                    ),
-                    const PopupMenuItem(
+                    ),                    const PopupMenuItem(
                       value: 'credits',
                       child: Row(
                         children: [
                           Icon(Icons.info_outline, size: 18),
                           SizedBox(width: 8),
                           Text('About'),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'call_logs',
+                      child: Row(
+                        children: [
+                          Icon(Icons.history, size: 18),
+                          SizedBox(width: 8),
+                          Text('Call Logs'),
                         ],
                       ),
                     ),
@@ -1040,6 +1055,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
                 },
               ),
               ListTile(
+                leading: const Icon(Icons.history, color: Color(0xFF2F3437)),
+                title: const Text('Call Logs'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => const CallLogsScreen(),
+                    ),
+                  );
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.info_outline, color: Color(0xFF2F3437)),
                 title: const Text('About'),
                 onTap: () {
@@ -1090,9 +1117,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
       if (!hasPermissions) {
         if (mounted) {
           PermissionService.showPermissionDialog(context, 'camera and microphone');
-        }
-        return;
-      }      final callService = context.read<CallService>();
+        }        return;
+      }      final callService = context.read<CallServiceImproved>();
       await callService.initiateCall(
         recipientId: _selectedUser!.id,
         recipientName: _selectedUser!.displayName.isNotEmpty 
@@ -1123,9 +1149,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {  
       if (!hasPermissions) {
         if (mounted) {
           PermissionService.showPermissionDialog(context, 'camera and microphone');
-        }
-        return;
-      }      final callService = context.read<CallService>();
+        }        return;
+      }      final callService = context.read<CallServiceImproved>();
       final memberIds = List<String>.from(_selectedGroup!['memberIds'] ?? []);
       
       await callService.initiateCall(

@@ -338,9 +338,76 @@ class ChatItemWidget extends StatelessWidget {
                     ),
                 ],
               ),
-            ),
-          ],
+            ),          ],
         );
+      case MessageType.callLog:
+        if (message.callLog != null) {
+          final callLogData = message.callLog!;
+          final isVideo = callLogData['isVideo'] as bool? ?? false;
+          final type = callLogData['type'] as String? ?? '';
+          final status = callLogData['status'] as String? ?? '';
+          final duration = callLogData['duration'] as int? ?? 0;
+          
+          final isIncoming = type == 'incoming';
+          final isMissed = status == 'missed';
+          
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0F0F0),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isVideo ? Icons.videocam : Icons.phone,
+                  size: 16,
+                  color: isMissed ? Colors.red : Colors.green,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  _getCallLogText(isIncoming, isMissed, isVideo, duration),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF666666),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+        return const SizedBox.shrink();
+    }
+  }
+
+  String _getCallLogText(bool isIncoming, bool isMissed, bool isVideo, int duration) {
+    if (isMissed) {
+      return isIncoming ? 'Missed call' : 'Call not answered';
+    }
+    
+    final callType = isVideo ? 'Video call' : 'Call';
+    final direction = isIncoming ? 'Incoming' : 'Outgoing';
+    
+    if (duration > 0) {
+      final durationText = _formatCallDuration(duration);
+      return '$direction $callType ($durationText)';
+    } else {
+      return '$direction $callType';
+    }
+  }
+
+  String _formatCallDuration(int seconds) {
+    if (seconds < 60) {
+      return '${seconds}s';
+    } else if (seconds < 3600) {
+      final minutes = seconds ~/ 60;
+      final remainingSeconds = seconds % 60;
+      return remainingSeconds > 0 ? '${minutes}m ${remainingSeconds}s' : '${minutes}m';
+    } else {
+      final hours = seconds ~/ 3600;
+      final minutes = (seconds % 3600) ~/ 60;
+      return minutes > 0 ? '${hours}h ${minutes}m' : '${hours}h';
     }
   }
 

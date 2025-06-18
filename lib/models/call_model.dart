@@ -2,14 +2,21 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum CallType { voice, video }
 enum CallState { 
-  initiating,
-  ringing, 
-  connecting, 
-  connected, 
-  ended, 
-  declined, 
-  missed, 
-  failed 
+  // Call initiation states
+  initiating,     // Call is being set up
+  ringing,        // Call is ringing on recipient end
+  
+  // WebRTC negotiation states  
+  connecting,     // WebRTC signaling in progress (offer/answer/ICE)
+  connected,      // WebRTC peer connection established
+  
+  // Call termination states
+  ended,          // Call ended normally
+  declined,       // Call was declined by recipient
+  missed,         // Call was not answered (timeout)
+  failed,         // Call failed due to technical issues
+  busy,           // Recipient is busy
+  cancelled       // Call was cancelled by caller
 }
 
 class Call {

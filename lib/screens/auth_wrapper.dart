@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
-import '../services/call_service.dart';
+import '../services/call_service_improved.dart';
 import 'auth_screen.dart';
 import 'chat_screen.dart';
 
@@ -19,11 +19,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
   Widget build(BuildContext context) {
     return Consumer<AuthService>(
       builder: (context, authService, child) {
-        if (authService.isAuthenticated) {          // Start listening for incoming calls when user is authenticated
-          if (!_hasStartedListening) {
+        if (authService.isAuthenticated) {          // Start listening for incoming calls when user is authenticated          if (!_hasStartedListening) {
             _hasStartedListening = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              final callService = context.read<CallService>();
+              final callService = context.read<CallServiceImproved>();
               callService.initializeSocket();
               callService.startListeningForIncomingCalls();
             });

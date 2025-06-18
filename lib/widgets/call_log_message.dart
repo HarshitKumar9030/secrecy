@@ -3,7 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../models/call_log.dart';
 import '../models/call_model.dart';
-import '../services/call_service.dart';
+import '../services/call_service_improved.dart';
 
 class CallLogMessage extends StatelessWidget {
   final CallLog callLog;
@@ -305,7 +305,7 @@ class CallLogMessage extends StatelessWidget {
 
   void _startCall(BuildContext context, CallType type) {
     try {
-      final callService = context.read<CallService>();
+      final callService = context.read<CallServiceImproved>();
       
       if (callLog.groupId != null) {
         // Group call
@@ -323,7 +323,7 @@ class CallLogMessage extends StatelessWidget {
       );
     }
   }
-  Future<void> _initiatePrivateCall(BuildContext context, CallService callService, CallType type) async {
+  Future<void> _initiatePrivateCall(BuildContext context, CallServiceImproved callService, CallType type) async {
     try {
       await callService.initiateCall(
         recipientId: callLog.participantId,
@@ -344,7 +344,7 @@ class CallLogMessage extends StatelessWidget {
       }
     }
   }
-  Future<void> _initiateGroupCall(BuildContext context, CallService callService, CallType type) async {
+  Future<void> _initiateGroupCall(BuildContext context, CallServiceImproved callService, CallType type) async {
     try {
       // For group calls, we need more information about participants
       // This is a simplified implementation

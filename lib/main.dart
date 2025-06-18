@@ -6,7 +6,8 @@ import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:provider/provider.dart';
 import 'firebase_options.dart';
 import 'services/auth_service.dart';
-import 'services/call_service.dart';
+import 'services/call_service_improved.dart';
+import 'services/webrtc_service_new.dart';
 import 'screens/auth_wrapper.dart';
 import 'screens/call_screen.dart';
 import 'models/call_model.dart';
@@ -52,16 +53,16 @@ class SecrecyApp extends StatelessWidget {
       ),
     );
 
-    return MultiProvider(
-      providers: [
+    return MultiProvider(      providers: [
         ChangeNotifierProvider(create: (context) => AuthService()),
-        ChangeNotifierProvider(create: (_) => CallService()),
+        ChangeNotifierProvider(create: (_) => CallServiceImproved()),
+        ChangeNotifierProvider(create: (_) => WebRTCService()),
         StreamProvider<Call?>(
-          create: (context) => context.read<CallService>().callStateStream,
+          create: (context) => context.read<CallServiceImproved>().callStateStream,
           initialData: null,
         ),
       ],
-      child: Consumer<CallService>(
+      child: Consumer<CallServiceImproved>(
         builder: (context, callService, child) {
           return StreamBuilder<Call?>(
             stream: callService.callStateStream,

@@ -6,22 +6,16 @@ import 'package:socket_io_client/socket_io_client.dart' as IO;
 class WebRTCService extends ChangeNotifier {
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
-  MediaStream? _remoteStream;
-  bool _disposed = false;
-    final Map<String, dynamic> _iceServers = {
+  MediaStream? _remoteStream;  bool _disposed = false;
+  
+  final Map<String, dynamic> _configuration = {
     'iceServers': [
       {'urls': 'stun:stun.l.google.com:19302'},
       {'urls': 'stun:stun1.l.google.com:19302'},
       {'urls': 'stun:stun2.l.google.com:19302'},
-    ]
-  };
-  
-  final Map<String, dynamic> _configuration = {
-    'sdpSemantics': 'unified-plan', // Use Unified Plan SDP semantics
-    'mandatory': {},
-    'optional': [
-      {'DtlsSrtpKeyAgreement': true},
-    ]
+    ],
+    'sdpSemantics': 'unified-plan',
+    'iceCandidatePoolSize': 10,
   };
   
   IO.Socket? _socket;
@@ -129,18 +123,18 @@ class WebRTCService extends ChangeNotifier {
         notifyListeners();
       }
     });
-  }
-    // Create peer connection
+  }    // Create peer connection
   Future<void> _createPeerConnection() async {
-    _peerConnection = await createPeerConnection(_iceServers, _configuration);
+    debugPrint('🔗 Creating peer connection with configuration: $_configuration');
+    _peerConnection = await createPeerConnection(_configuration);
       // Handle ice candidates
     _peerConnection!.onIceCandidate = (RTCIceCandidate candidate) {
-      debugPrint('Sending ICE candidate');
+      debugPrint('🧊 Sending ICE candidate: ${candidate.candidate}');
       _socket?.emit('ice-candidate', {
         'roomId': _roomId,
         'candidate': candidate.toMap(),
       });
-    };    // Handle remote tracks (replaces onAddStream)
+    };// Handle remote tracks (replaces onAddStream)
     _peerConnection!.onTrack = (RTCTrackEvent event) {
       debugPrint('Received remote track');
       if (event.streams.isNotEmpty) {

@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum MessageType { text, image, video }
+enum MessageType { text, image, video, callLog }
 
 enum MessageStatus { 
   sending,    // Message being sent
@@ -25,10 +25,10 @@ class Message {
   final String? groupId; // ID of the group if this is a group message
   final DateTime timestamp;
   final bool isEdited;
-  final DateTime? editedAt;
-  final bool isSystemMessage; // For system messages like "User joined group"
+  final DateTime? editedAt;  final bool isSystemMessage; // For system messages like "User joined group"
   final bool isOptimistic; // For optimistic updates (not yet confirmed by server)
   final MessageStatus status; // Message delivery status
+  final Map<String, dynamic>? callLog; // Call log data for call log messages
 
   Message({
     required this.id,
@@ -50,6 +50,7 @@ class Message {
     this.isSystemMessage = false,
     this.isOptimistic = false,
     this.status = MessageStatus.sending,
+    this.callLog,
   });
   Map<String, dynamic> toMap() {
     return {
@@ -67,10 +68,10 @@ class Message {
       'groupId': groupId,
       'timestamp': Timestamp.fromDate(timestamp),
       'isEdited': isEdited,
-      'editedAt': editedAt != null ? Timestamp.fromDate(editedAt!) : null,
-      'isSystemMessage': isSystemMessage,
+      'editedAt': editedAt != null ? Timestamp.fromDate(editedAt!) : null,      'isSystemMessage': isSystemMessage,
       'isOptimistic': isOptimistic,
       'status': status.toString().split('.').last,
+      'callLog': callLog,
     };
   }
   factory Message.fromMap(Map<String, dynamic> map, String id) {
@@ -85,8 +86,7 @@ class Message {
       videoUrl: map['videoUrl'],
       thumbnailUrl: map['thumbnailUrl'],
       videoDuration: map['videoDuration'],
-      senderId: map['senderId'] ?? '',
-      senderEmail: map['senderEmail'] ?? '',
+      senderId: map['senderId'] ?? '',      senderEmail: map['senderEmail'] ?? '',
       senderName: map['senderName'] ?? '',
       senderPhotoUrl: map['senderPhotoUrl'],
       recipientId: map['recipientId'],
@@ -100,6 +100,7 @@ class Message {
         (e) => e.toString().split('.').last == (map['status'] ?? 'sending'),
         orElse: () => MessageStatus.sending,
       ),
+      callLog: map['callLog'],
     );
   }
 

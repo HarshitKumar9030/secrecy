@@ -8,14 +8,12 @@ import '../models/message.dart';
 import '../models/user.dart';
 import '../models/call_log.dart';
 import '../models/chat_item.dart';
-import 'call_service.dart';
+import 'event_bus.dart';
 
 class ChatService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;  final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
   final Uuid _uuid = const Uuid();
-  final CallService _callService = CallService();
   
   // Cache for messages and streams
   final Map<String, List<Message>> _messageCache = {};
@@ -36,11 +34,13 @@ class ChatService {
   
   Timer? _presenceTimer;
   bool _migrationRun = false;
-
   // Constructor
   ChatService() {
     // Run migration once when service is created
     _runMigrationOnce();
+    
+    // Listen for call log events
+    _listenForCallLogEvents();
   }
 
   Future<void> _runMigrationOnce() async {
@@ -1177,10 +1177,10 @@ class ChatService {
     
     // Create fresh controller
     _chatItemControllers[cacheKey] = StreamController<List<ChatItem>>.broadcast();
-    
-    // Combine messages and call logs streams
+      // Combine messages and call logs streams
     final messagesStream = getMessagesStream(recipientId: recipientId, groupId: groupId);
-    final callLogsStream = _callService.getCallLogsStream(recipientId: recipientId, groupId: groupId);
+    // TODO: Re-implement call logs integration without circular dependency
+    // final callLogsStream = _callService.getCallLogsStream(recipientId: recipientId, groupId: groupId);
     
     // Keep track of latest data from both streams
     List<Message> latestMessages = [];
@@ -1207,19 +1207,68 @@ class ChatService {
         _chatItemControllers[cacheKey]!.add(combinedItems);
       }
     }
-    
-    // Listen to messages stream
+      // Listen to messages stream
     messagesStream.listen((messages) {
       latestMessages = messages;
       emitCombinedItems();
     });
     
-    // Listen to call logs stream
-    callLogsStream.listen((callLogs) {
-      latestCallLogs = callLogs;
-      emitCombinedItems();
-    });
+    // TODO: Re-implement call logs stream listener without circular dependency
+    // callLogsStream.listen((callLogs) {
+    //   latestCallLogs = callLogs;
+    //   emitCombinedItems();
+    // });
     
     return _chatItemControllers[cacheKey]!.stream;
+  }
+
+  // Listen for call log events from CallService
+  void _listenForCallLogEvents() {
+    EventBus().on<CallLogCreatedEvent>().listen((event) {
+      _addCallLogToChat(event);
+    });
+  }
+
+  // Add call log to chat as a message
+  Future<void> _addCallLogToChat(CallLogCreatedEvent event) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return;
+
+      String? chatId;
+      
+      if (event.isGroupCall && event.groupId != null) {
+        // Group call - use group ID as chat ID
+        chatId = event.groupId;
+      } else if (event.recipientId.isNotEmpty) {
+        // 1-on-1 call - generate chat ID from user IDs
+        final List<String> userIds = [user.uid, event.recipientId];
+        userIds.sort(); // Ensure consistent chat ID regardless of who calls
+        chatId = userIds.join('_');
+      }      if (chatId != null) {
+        // Create a call log message
+        final callLogMessage = Message(
+          id: _uuid.v4(),
+          senderId: user.uid,
+          senderEmail: user.email ?? '',
+          senderName: user.displayName ?? user.email?.split('@')[0] ?? 'Unknown',
+          content: '',
+          timestamp: DateTime.now(),
+          type: MessageType.callLog,
+          callLog: event.callLog,
+        );
+        
+        // Add message to chat by directly saving to Firestore
+        final chatCollection = event.isGroupCall 
+            ? _firestore.collection('group_chats').doc(chatId).collection('messages')
+            : _firestore.collection('chats').doc(chatId).collection('messages');
+            
+        await chatCollection.doc(callLogMessage.id).set(callLogMessage.toMap());
+        
+        print('📞 Call log added to chat: $chatId');
+      }
+    } catch (e) {
+      print('❌ Error adding call log to chat: $e');
+    }
   }
 }
